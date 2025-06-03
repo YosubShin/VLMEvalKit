@@ -3,6 +3,11 @@ from PIL import Image
 from .base import BaseModel
 from ..smp import *
 from ..dataset import DATASET_TYPE
+from mimetypes import guess_type
+from io import BytesIO
+import base64
+import os
+import logging
 
 TYPE_PROMPTS = {
     'Y/N':'vqa2:',
@@ -28,6 +33,8 @@ DATASET_PROMPTS = {
     'TextVQA_VAL':'text_vqa:'
 }
 
+VLLM_MAX_IMAGE_INPUT_NUM = 24
+
 
 class molmo(BaseModel):
 
@@ -42,24 +49,67 @@ class molmo(BaseModel):
             logging.critical('Please install transformer and einops before using molmo.')
             raise e
 
-        if '72b' not in model_path.lower():
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.bfloat16,
-                device_map='cuda')
-        else:
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.bfloat16,
-                device_map='auto')
-
-        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, torch_dtype=torch.bfloat16)
+        self.model_path = model_path
         self.kwargs = kwargs
         self.model_name = model_path
         # set default maximum number of crops to 36
         self.max_crops = kwargs.get('max_crops', 36)
+        
+        # VLLM configuration
+        self.use_vllm = kwargs.get('use_vllm', False)
+        self.limit_mm_per_prompt = VLLM_MAX_IMAGE_INPUT_NUM
+        
+        # Generation parameters
+        self.max_new_tokens = kwargs.get('max_new_tokens', 200)
+        self.temperature = kwargs.get('temperature', 0.0)
+        self.verbose = kwargs.get('verbose', False)
+        
+        if self.use_vllm:
+            from vllm import LLM
+            gpu_count = torch.cuda.device_count()
+            if gpu_count >= 8:
+                tp_size = 8
+            elif gpu_count >= 4:
+                tp_size = 4
+            elif gpu_count >= 2:
+                tp_size = 2
+            else:
+                tp_size = 1
+            logging.info(
+                f'Using vLLM for {self.model_path} inference with {tp_size} GPUs (available: {gpu_count})'
+            )
+            
+            if os.environ.get('VLLM_WORKER_MULTIPROC_METHOD') != 'spawn':
+                logging.warning(
+                    'VLLM_WORKER_MULTIPROC_METHOD is not set to spawn.'
+                    'Use \'export VLLM_WORKER_MULTIPROC_METHOD=spawn\' to avoid potential multi-process issues'
+                )
+            
+            self.llm = LLM(
+                model=self.model_path,
+                max_num_seqs=4,
+                max_model_len=16384,  # Adjusted for Molmo
+                limit_mm_per_prompt={"image": self.limit_mm_per_prompt},
+                tensor_parallel_size=tp_size,
+                gpu_memory_utilization=kwargs.get("gpu_utils", 0.9),
+                trust_remote_code=True,  # Required for Molmo
+            )
+            
+        else:
+            if '72b' not in model_path.lower():
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_path,
+                    trust_remote_code=True,
+                    torch_dtype=torch.bfloat16,
+                    device_map='cuda')
+            else:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_path,
+                    trust_remote_code=True,
+                    torch_dtype=torch.bfloat16,
+                    device_map='auto')
+
+        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, torch_dtype=torch.bfloat16)
 
     def use_custom_prompt(self, dataset):
         if DATASET_TYPE(dataset) in ['Y/N', 'MCQ', 'VQA']:
@@ -159,7 +209,139 @@ class molmo(BaseModel):
             prompt = f"{prefix} {question}"
         return prompt
 
-    def generate_inner(self, message, dataset=None):
+    def _prepare_content_vllm(self, inputs: list, dataset: str = None) -> list:
+        """Prepare content for VLLM inference."""
+        content = []
+        num_images = 0
+        
+        for item in inputs:
+            if item['type'] == 'text':
+                content.append({
+                    "type": "text",
+                    "text": item['value']
+                })
+            elif item['type'] == 'image':
+                if num_images < self.limit_mm_per_prompt:
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": self._ensure_image_url(item['value'])
+                        }
+                    })
+                    num_images += 1
+                else:
+                    logging.warning(
+                        f"Number of images exceeds the limit of {self.limit_mm_per_prompt}. "
+                        f"Only the first {self.limit_mm_per_prompt} images will be used."
+                    )
+        
+        return content
+    
+    def _ensure_image_url(self, image_path: str) -> str:
+        """Convert image path to URL format for VLLM."""
+        prefixes = ['http://', 'https://', 'file://', 'data:image']
+        if any(image_path.startswith(prefix) for prefix in prefixes):
+            return image_path
+        if os.path.exists(image_path):
+            return 'file://' + os.path.abspath(image_path)
+        raise ValueError(f'Invalid image path: {image_path}')
+    
+    def _encode_image_to_base64(self, image_path: str) -> str:
+        """Encode image to base64 for VLLM."""
+        mime_type, _ = guess_type(image_path)
+        if mime_type is None:
+            mime_type = "image/jpeg"
+        
+        image = Image.open(image_path)
+        if image.mode == "RGBA":
+            image = self._rgba_to_rgb(image)
+        
+        with BytesIO() as output:
+            image.convert("RGB").save(output, format="JPEG")
+            base64_encoded_data = base64.b64encode(output.getvalue()).decode("utf-8")
+        
+        return f"data:{mime_type};base64,{base64_encoded_data}"
+    
+    @staticmethod
+    def _rgba_to_rgb(image):
+        """Convert RGBA image to RGB."""
+        background = Image.new("RGBA", image.size, (255, 255, 255, 255))
+        return Image.alpha_composite(background, image).convert("RGB")
+    
+    def generate_inner_vllm(self, message, dataset=None):
+        """Generate response using VLLM."""
+        from vllm import SamplingParams
+        
+        # Convert message to VLLM format
+        content = self._prepare_content_vllm(message, dataset=dataset)
+        
+        # Handle multimodal inputs
+        images = []
+        text_parts = []
+        
+        for item in content:
+            if item["type"] == "text":
+                text_parts.append(item["text"])
+            elif item["type"] == "image_url":
+                image_url = item["image_url"]["url"]
+                if image_url.startswith('file://'):
+                    image_path = image_url[7:]  # Remove 'file://' prefix
+                    image = Image.open(image_path)
+                    if image.mode != "RGB":
+                        image = image.convert("RGB")
+                    images.append(image)
+        
+        # Combine text parts
+        prompt = " ".join(text_parts)
+        
+        if self.verbose:
+            print(f'\\033[31mVLLM Prompt: {prompt}\\033[0m')
+            print(f'\\033[31mVLLM Images: {len(images)}\\033[0m')
+        
+        # Set up sampling parameters
+        sampling_params = SamplingParams(
+            temperature=self.temperature,
+            max_tokens=self.max_new_tokens,
+            stop=["<|endoftext|>"]  # Molmo stop token
+        )
+        
+        # Generate with VLLM
+        if images:
+            outputs = self.llm.generate(
+                {
+                    "prompt": prompt,
+                    "multi_modal_data": {"image": images},
+                },
+                sampling_params=sampling_params,
+            )
+        else:
+            outputs = self.llm.generate(
+                {"prompt": prompt},
+                sampling_params=sampling_params,
+            )
+        
+        # Extract generated text
+        generated_text = ""
+        for output in outputs:
+            generated_text = output.outputs[0].text.strip()
+        
+        # Apply post-processing specific to Molmo/dataset
+        if dataset in ['AI2D_TEST', 'AI2D_TEST_NO_MASK']:
+            if 'ai2_diagram_no_letter' in prompt:
+                try:
+                    options = prompt.split('\\n')[1:]
+                    if generated_text in options:
+                        answer = options.index(generated_text)
+                        generated_text = chr(answer + ord('A'))
+                except (IndexError, ValueError):
+                    pass  # Keep original text if parsing fails
+        
+        if self.verbose:
+            print(f'\\033[32mVLLM Generated: {generated_text}\\033[0m')
+        
+        return generated_text
+
+    def generate_inner_transformers(self, message, dataset=None):
         from transformers import GenerationConfig
         prompt, image_path = self.message_to_promptimg(message, dataset=dataset)
 
@@ -203,3 +385,10 @@ class molmo(BaseModel):
         # print(dataset, prompt, generated_text, inputs['images'].size()) # uncomment to debug
 
         return generated_text
+    
+    def generate_inner(self, message, dataset=None):
+        """Route to appropriate generation method."""
+        if self.use_vllm:
+            return self.generate_inner_vllm(message, dataset=dataset)
+        else:
+            return self.generate_inner_transformers(message, dataset=dataset)
