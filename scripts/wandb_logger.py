@@ -224,17 +224,43 @@ def run_evaluation_and_log(
     if additional_args:
         cmd.extend(additional_args)
         
-    # Run evaluation
+    # Run evaluation with real-time output
+    logger.info(f"Running command: {' '.join(cmd)}")
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=Path(__file__).parent.parent)
+        # Use Popen for real-time output streaming
+        process = subprocess.Popen(
+            cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.STDOUT,  # Combine stderr with stdout
+            text=True, 
+            bufsize=1,  # Line buffered
+            universal_newlines=True,
+            cwd=Path(__file__).parent.parent
+        )
+        
+        # Stream output in real-time
+        output_lines = []
+        while True:
+            output = process.stdout.readline()
+            if output == '' and process.poll() is not None:
+                break
+            if output:
+                # Print to console immediately
+                print(output.strip())
+                output_lines.append(output.strip())
+        
+        # Wait for process to complete
+        return_code = process.poll()
+        
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, cmd, output='\n'.join(output_lines))
+            
         logger.info("Evaluation completed successfully")
-        logger.info(f"STDOUT: {result.stdout}")
-        if result.stderr:
-            logger.warning(f"STDERR: {result.stderr}")
+        
     except subprocess.CalledProcessError as e:
-        logger.error(f"Evaluation failed: {e}")
-        logger.error(f"STDOUT: {e.stdout}")
-        logger.error(f"STDERR: {e.stderr}")
+        logger.error(f"Evaluation failed with return code {e.returncode}")
+        if hasattr(e, 'output') and e.output:
+            logger.error(f"Command output: {e.output}")
         raise
     
     # Find and log result files

@@ -317,6 +317,15 @@ ValueError: User-specified max_model_len (16384) is greater than the derived max
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 ```
 
+#### 7. VLLM Profiling Error (FIXED)
+```
+AssertionError: Expected at least 24 dummy 'image' instances for profiling, but found 1 instances instead.
+```
+**Solution**: This error has been fixed in the latest version
+- Molmo models only support 1 image per prompt (not 24 like some other models)
+- VLLM configuration now correctly uses `limit_mm_per_prompt={"image": 1}`
+- This eliminates the profiling assertion error
+
 ### Debug Mode
 
 Enable verbose logging for debugging:
