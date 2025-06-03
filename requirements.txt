@@ -38,3 +38,4 @@ typing_extensions
 validators
 xlsxwriter
 tensorflow
+wandb
