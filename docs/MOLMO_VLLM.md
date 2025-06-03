@@ -8,7 +8,8 @@ Molmo models from AllenAI now support VLLM acceleration for faster inference. Th
 
 **Key Limitations:**
 - Molmo models support only **1 image per prompt** (unlike some other VLMs that support multiple images)
-- Maximum context length is 4096 tokens
+- Maximum context length is 4096 tokens (actual model limit)
+- **Conservative defaults**: Uses 3800 token limit to account for variable image token counts (400-800 tokens per image depending on resolution/aspect ratio)
 
 ## Supported Models
 
@@ -179,7 +180,7 @@ model = molmo(
 | `max_new_tokens` | int | 200 | Maximum tokens to generate |
 | `temperature` | float | 0.0 | Sampling temperature |
 | `verbose` | bool | False | Enable verbose logging |
-| `max_context_length` | int | 4096 | Maximum context length in tokens |
+| `max_context_length` | int | 3800 | Maximum context length in tokens (conservative) |
 | `auto_truncate` | bool | True | Automatically truncate long inputs |
 
 ### Model-Specific Parameters  
@@ -192,7 +193,7 @@ model = molmo(
 
 | Parameter | Value | Description |
 |-----------|--------|-------------|
-| `max_model_len` | 4096 | Maximum sequence length (Molmo's actual context length) |
+| `max_model_len` | 4000 | Maximum sequence length (conservative for image tokens) |
 | `limit_mm_per_prompt` | 1 | Maximum images per prompt (Molmo limitation) |
 | `tensor_parallel_size` | auto | Determined by available GPUs |
 

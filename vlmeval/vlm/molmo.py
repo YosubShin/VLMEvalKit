@@ -34,7 +34,7 @@ DATASET_PROMPTS = {
 }
 
 VLLM_MAX_IMAGE_INPUT_NUM = 1  # Molmo only supports 1 image per prompt
-DEFAULT_MAX_CONTEXT_LENGTH = 4096
+DEFAULT_MAX_CONTEXT_LENGTH = 3800  # Conservative limit to account for image tokens and generation
 
 
 class molmo(BaseModel):
@@ -94,10 +94,11 @@ class molmo(BaseModel):
             
             # Determine appropriate max_model_len for Molmo
             # Molmo models typically have max_position_embeddings=4096
+            # But we need to be conservative to account for variable image token counts
             max_model_len = kwargs.get("max_model_len", None)
             if max_model_len is None:
-                # Use model's actual context length (4096 for most Molmo models)
-                max_model_len = self.max_context_length
+                # Use conservative context length that accounts for image tokens
+                max_model_len = min(4000, self.max_context_length + 500)  # Allow some headroom for VLLM
                 
             self.llm = LLM(
                 model=self.model_path,
@@ -268,11 +269,17 @@ class molmo(BaseModel):
         text_items = [item for item in content if item.get('type') == 'text']
         image_items = [item for item in content if item.get('type') in ['image', 'image_url']]
         
-        # Estimate tokens for images (conservative estimate: ~100 tokens per image)
-        image_tokens = len(image_items) * 100
+        # Conservative estimates for Molmo:
+        # - Images: ~400-800 tokens per image depending on resolution/aspect ratio
+        # - Generation: max_new_tokens 
+        # - System/formatting overhead: ~200 tokens
+        # - Safety buffer: ~300 tokens
+        image_tokens = len(image_items) * 800  # Conservative estimate for Molmo image tokens
+        overhead_tokens = 200  # System prompts, formatting
+        safety_buffer = 300    # Extra safety margin
         
         # Calculate available tokens for text
-        available_text_tokens = max_tokens - image_tokens - self.max_new_tokens - 100  # Buffer
+        available_text_tokens = max_tokens - image_tokens - self.max_new_tokens - overhead_tokens - safety_buffer
         
         if available_text_tokens <= 0:
             if self.verbose:
@@ -393,9 +400,24 @@ class molmo(BaseModel):
         # Combine text parts
         prompt = " ".join(text_parts)
         
+        # Final safety check: aggressively truncate if prompt is still too long
+        if self.auto_truncate:
+            estimated_prompt_tokens = self._estimate_token_count(prompt)
+            # Very conservative limit: assume worst case for image tokens and generation
+            max_prompt_tokens = 2500  # Leave plenty of room for images (~800) + generation (~200) + overhead (~500+)
+            
+            if estimated_prompt_tokens > max_prompt_tokens:
+                if self.verbose:
+                    logging.warning(f"Final truncation: prompt too long ({estimated_prompt_tokens} tokens), truncating to {max_prompt_tokens}")
+                # Aggressive truncation - keep only the most essential parts
+                target_chars = max_prompt_tokens * 4  # Convert back to characters
+                if len(prompt) > target_chars:
+                    prompt = prompt[:target_chars//2] + " ... [TRUNCATED] ... " + prompt[-target_chars//4:]
+        
         if self.verbose:
-            print(f'\\033[31mVLLM Prompt: {prompt}\\033[0m')
+            print(f'\\033[31mVLLM Prompt: {prompt[:100]}...\\033[0m')
             print(f'\\033[31mVLLM Images: {len(images)}\\033[0m')
+            print(f'\\033[31mEstimated tokens: {self._estimate_token_count(prompt)}\\033[0m')
         
         # Set up sampling parameters
         sampling_params = SamplingParams(
@@ -447,7 +469,13 @@ class molmo(BaseModel):
         # Apply truncation to prompt if needed
         if self.auto_truncate:
             estimated_tokens = self._estimate_token_count(prompt)
-            available_tokens = self.max_context_length - self.max_new_tokens - 200  # Buffer for image tokens
+            # Conservative token budget for transformers backend
+            # - Image tokens: ~800 tokens (conservative estimate)
+            # - Generation: max_new_tokens (200)
+            # - System/formatting overhead: ~200 tokens
+            # - Safety buffer: ~300 tokens
+            reserved_tokens = 800 + self.max_new_tokens + 200 + 300  # Total: ~1500 tokens
+            available_tokens = self.max_context_length - reserved_tokens
             
             if estimated_tokens > available_tokens:
                 if self.verbose:

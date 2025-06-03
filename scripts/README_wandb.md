@@ -22,7 +22,7 @@ This directory contains a WandB (Weights & Biases) integration script for loggin
 Run a new evaluation and automatically log results:
 
 ```bash
-# Basic usage
+# Basic usage - console output from run.py will be displayed in real-time
 python scripts/wandb_logger.py --run-and-log --model GPT4o --dataset MMBench_DEV_EN
 
 # With custom project name
@@ -77,6 +77,19 @@ python scripts/wandb_logger.py \
 - **Model Info**: Model name and configuration parameters
 - **Dataset Info**: Dataset name and metadata
 - **Framework**: VLMEvalKit version and settings
+
+## Features
+
+### Real-Time Output Streaming
+
+When using `--run-and-log`, the console output from `run.py` is displayed in real-time:
+
+- **Live Progress**: See evaluation progress as it happens
+- **Error Visibility**: Immediately see any errors or warnings
+- **No Lost Output**: All console output is preserved and displayed
+- **Combined Streams**: Both stdout and stderr are shown together
+
+This means you get the same experience as running `run.py` directly, but with automatic WandB logging when complete.
 
 ## WandB Dashboard
 
