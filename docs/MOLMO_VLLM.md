@@ -6,6 +6,10 @@ This document describes the VLLM integration for Molmo models in VLMEvalKit.
 
 Molmo models from AllenAI now support VLLM acceleration for faster inference. This integration provides significant speedup for batch evaluation while maintaining compatibility with the existing transformers-based pipeline.
 
+**Key Limitations:**
+- Molmo models support only **1 image per prompt** (unlike some other VLMs that support multiple images)
+- Maximum context length is 4096 tokens
+
 ## Supported Models
 
 The following Molmo models support VLLM acceleration:
@@ -189,7 +193,7 @@ model = molmo(
 | Parameter | Value | Description |
 |-----------|--------|-------------|
 | `max_model_len` | 4096 | Maximum sequence length (Molmo's actual context length) |
-| `limit_mm_per_prompt` | 24 | Maximum images per prompt |
+| `limit_mm_per_prompt` | 1 | Maximum images per prompt (Molmo limitation) |
 | `tensor_parallel_size` | auto | Determined by available GPUs |
 
 ## Performance Considerations

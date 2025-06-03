@@ -33,7 +33,7 @@ DATASET_PROMPTS = {
     'TextVQA_VAL':'text_vqa:'
 }
 
-VLLM_MAX_IMAGE_INPUT_NUM = 24
+VLLM_MAX_IMAGE_INPUT_NUM = 1  # Molmo only supports 1 image per prompt
 DEFAULT_MAX_CONTEXT_LENGTH = 4096
 
 
@@ -103,7 +103,7 @@ class molmo(BaseModel):
                 model=self.model_path,
                 max_num_seqs=4,
                 max_model_len=max_model_len,
-                limit_mm_per_prompt={"image": self.limit_mm_per_prompt},
+                limit_mm_per_prompt={"image": self.limit_mm_per_prompt},  # 1 image per prompt for Molmo
                 tensor_parallel_size=tp_size,
                 gpu_memory_utilization=kwargs.get("gpu_utils", 0.9),
                 trust_remote_code=True,  # Required for Molmo
