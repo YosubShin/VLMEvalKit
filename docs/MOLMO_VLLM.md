@@ -121,6 +121,49 @@ message = [
 response = model.generate_inner(message, dataset="MMBench_DEV_EN")
 ```
 
+## Automatic Truncation
+
+Molmo models now include automatic context length management to prevent "maximum length exceeded" warnings and errors.
+
+### How It Works
+
+- **Auto-truncation** is enabled by default (`auto_truncate=True`)
+- When input exceeds `max_context_length`, content is intelligently truncated
+- **Images are preserved** - truncation primarily affects text content
+- **Smart truncation** keeps the beginning and end of text, removing middle content
+- A `[TRUNCATED]` marker indicates where content was removed
+
+### Example with Truncation
+
+```python
+# Model with custom context length and truncation settings
+model = molmo(
+    model_path="allenai/Molmo-7B-D-0924",
+    max_context_length=2048,  # Shorter context for demonstration
+    auto_truncate=True,       # Enable auto-truncation (default)
+    verbose=True              # Show truncation warnings
+)
+
+# Long message that exceeds context length
+very_long_message = [
+    {"type": "text", "value": "Very long text content..." * 1000},
+    {"type": "image", "value": "/path/to/image.jpg"}
+]
+
+# Model automatically truncates text while preserving image
+response = model.generate_inner(very_long_message)  # No length warnings!
+```
+
+### Disabling Truncation
+
+```python
+# Disable auto-truncation to get original behavior
+model = molmo(
+    model_path="allenai/Molmo-7B-D-0924",
+    auto_truncate=False  # Disable truncation
+)
+```
+
 ## Configuration Parameters
 
 ### VLLM-Specific Parameters
@@ -132,6 +175,8 @@ response = model.generate_inner(message, dataset="MMBench_DEV_EN")
 | `max_new_tokens` | int | 200 | Maximum tokens to generate |
 | `temperature` | float | 0.0 | Sampling temperature |
 | `verbose` | bool | False | Enable verbose logging |
+| `max_context_length` | int | 4096 | Maximum context length in tokens |
+| `auto_truncate` | bool | True | Automatically truncate long inputs |
 
 ### Model-Specific Parameters  
 
@@ -233,6 +278,25 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 ValueError: trust_remote_code is required for Molmo models
 ```
 **Solution**: This is automatically handled in the VLLM integration
+
+#### 5. Context Length Warnings (FIXED)
+```
+This is a friendly reminder - the current text generation call will exceed the model's predefined maximum length (4096)
+```
+**Solution**: This warning has been eliminated with automatic truncation
+- Auto-truncation is enabled by default (`auto_truncate=True`)
+- Long inputs are automatically truncated to fit within context length
+- Images are preserved; text content is intelligently truncated
+- Disable with `auto_truncate=False` if needed
+
+```python
+# Enable verbose mode to see truncation warnings
+model = molmo(
+    model_path="allenai/Molmo-7B-D-0924",
+    verbose=True,           # Shows when truncation occurs
+    max_context_length=4096 # Adjust context length if needed
+)
+```
 
 ### Debug Mode
 

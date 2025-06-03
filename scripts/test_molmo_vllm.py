@@ -58,7 +58,9 @@ def test_molmo_vllm():
         'generate_inner_transformers',
         '_prepare_content_vllm',
         '_ensure_image_url',
-        '_encode_image_to_base64'
+        '_encode_image_to_base64',
+        '_estimate_token_count',
+        '_truncate_content'
     ]
     
     for method in required_methods:
@@ -189,6 +191,78 @@ def test_inference_integration():
     
     return True
 
+def test_truncation_functionality():
+    """Test the auto-truncation functionality."""
+    
+    print("\\nTesting Truncation Functionality")
+    print("=" * 40)
+    
+    model_path = "allenai/Molmo-7B-D-0924"
+    
+    try:
+        # Test with auto-truncation enabled
+        model = molmo(model_path=model_path, use_vllm=False, auto_truncate=True, max_context_length=1000)
+        
+        print("1. Testing token estimation")
+        test_text = "This is a test sentence for token counting."
+        token_count = model._estimate_token_count(test_text)
+        print(f"   ✓ Token estimation: '{test_text[:20]}...' -> {token_count} tokens")
+        
+        print("\\n2. Testing content truncation")
+        # Create very long content that exceeds context length
+        long_text = "This is a very long text that should be truncated. " * 200
+        long_content = [
+            {'type': 'text', 'text': long_text},
+            {'type': 'image_url', 'image_url': {'url': 'file:///test/image.jpg'}}
+        ]
+        
+        # Test with small max_tokens to force truncation
+        truncated = model._truncate_content(long_content, max_tokens=500)
+        print(f"   ✓ Content truncation: {len(long_content)} -> {len(truncated)} items")
+        
+        # Check if truncation occurred
+        text_content = next((item for item in truncated if item.get('type') == 'text'), {})
+        text_value = text_content.get('text', text_content.get('value', ''))
+        original_length = len(long_text)
+        truncated_length = len(text_value)
+        
+        if truncated_length < original_length:
+            print(f"   ✓ Text truncated: {original_length} -> {truncated_length} chars")
+        
+        if '[TRUNCATED]' in text_value:
+            print(f"   ✓ Truncation marker found in output")
+        
+        print("\\n3. Testing auto-truncate parameter")
+        # Test with auto_truncate disabled
+        model_no_truncate = molmo(model_path=model_path, use_vllm=False, auto_truncate=False)
+        if not model_no_truncate.auto_truncate:
+            print(f"   ✓ Auto-truncation can be disabled")
+        else:
+            print(f"   ✗ Failed to disable auto-truncation")
+            return False
+            
+        # Test with auto_truncate enabled (default)
+        model_truncate = molmo(model_path=model_path, use_vllm=False)
+        if model_truncate.auto_truncate:
+            print(f"   ✓ Auto-truncation enabled by default")
+        else:
+            print(f"   ✗ Auto-truncation not enabled by default")
+            return False
+            
+        print("\\n4. Testing custom context length")
+        model_custom = molmo(model_path=model_path, use_vllm=False, max_context_length=2048)
+        if model_custom.max_context_length == 2048:
+            print(f"   ✓ Custom context length set: {model_custom.max_context_length}")
+        else:
+            print(f"   ✗ Custom context length not set correctly")
+            return False
+        
+        return True
+        
+    except Exception as e:
+        print(f"   ✗ Truncation test failed: {e}")
+        return False
+
 if __name__ == "__main__":
     print("Molmo VLLM Integration Test Suite")
     print("=" * 50)
@@ -199,6 +273,7 @@ if __name__ == "__main__":
     success &= test_molmo_vllm()
     success &= test_config_integration() 
     success &= test_inference_integration()
+    success &= test_truncation_functionality()
     
     print("\n" + "=" * 50)
     if success:

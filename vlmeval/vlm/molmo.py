@@ -34,6 +34,7 @@ DATASET_PROMPTS = {
 }
 
 VLLM_MAX_IMAGE_INPUT_NUM = 24
+DEFAULT_MAX_CONTEXT_LENGTH = 4096
 
 
 class molmo(BaseModel):
@@ -63,6 +64,10 @@ class molmo(BaseModel):
         self.max_new_tokens = kwargs.get('max_new_tokens', 200)
         self.temperature = kwargs.get('temperature', 0.0)
         self.verbose = kwargs.get('verbose', False)
+        
+        # Context length management
+        self.max_context_length = kwargs.get('max_context_length', DEFAULT_MAX_CONTEXT_LENGTH)
+        self.auto_truncate = kwargs.get('auto_truncate', True)
         
         if self.use_vllm:
             from vllm import LLM
@@ -235,8 +240,93 @@ class molmo(BaseModel):
                         f"Only the first {self.limit_mm_per_prompt} images will be used."
                     )
         
+        # Apply automatic truncation if enabled
+        if self.auto_truncate:
+            content = self._truncate_content(content, self.max_context_length)
+        
         return content
     
+    def _estimate_token_count(self, text: str) -> int:
+        """Estimate token count for text (rough approximation: 1 token ≈ 4 characters)."""
+        return len(text) // 4
+    
+    def _truncate_content(self, content: list, max_tokens: int) -> list:
+        """Truncate content to fit within max_tokens while preserving images and structure."""
+        if not self.auto_truncate:
+            return content
+            
+        # Separate images and text
+        text_items = [item for item in content if item.get('type') == 'text']
+        image_items = [item for item in content if item.get('type') in ['image', 'image_url']]
+        
+        # Estimate tokens for images (conservative estimate: ~100 tokens per image)
+        image_tokens = len(image_items) * 100
+        
+        # Calculate available tokens for text
+        available_text_tokens = max_tokens - image_tokens - self.max_new_tokens - 100  # Buffer
+        
+        if available_text_tokens <= 0:
+            if self.verbose:
+                logging.warning(f"Too many images ({len(image_items)}) for context length. Keeping first {max_tokens // 200} images.")
+            # Keep only essential images
+            max_images = max(1, (max_tokens - self.max_new_tokens - 100) // 200)
+            image_items = image_items[:max_images]
+            available_text_tokens = 100  # Minimal text
+        
+        # Combine all text content
+        all_text = " ".join([item.get('text', item.get('value', '')) for item in text_items])
+        
+        # Estimate current text tokens
+        text_tokens = self._estimate_token_count(all_text)
+        
+        if text_tokens > available_text_tokens:
+            if self.verbose:
+                logging.warning(
+                    f"Text content ({text_tokens} tokens) exceeds available space ({available_text_tokens} tokens). "
+                    f"Truncating to fit context length of {self.max_context_length}."
+                )
+            
+            # Calculate truncation ratio
+            truncation_ratio = available_text_tokens / text_tokens
+            target_length = int(len(all_text) * truncation_ratio)
+            
+            # Prefer keeping the beginning and end of text (remove middle)
+            if target_length > 0:
+                start_length = target_length // 2
+                end_length = target_length - start_length
+                
+                if len(all_text) > start_length + end_length + 50:  # Leave space for truncation indicator
+                    truncated_text = (
+                        all_text[:start_length] + 
+                        " ... [TRUNCATED] ... " + 
+                        all_text[-end_length:] if end_length > 0 else ""
+                    )
+                else:
+                    truncated_text = all_text[:target_length]
+            else:
+                truncated_text = all_text[:200]  # Minimal fallback
+            
+            # Update text items
+            if text_items:
+                text_items[0]['text'] = truncated_text
+                text_items[0]['value'] = truncated_text
+                text_items = text_items[:1]  # Keep only first text item
+        
+        # Reconstruct content maintaining order
+        truncated_content = []
+        text_idx = 0
+        image_idx = 0
+        
+        for item in content:
+            if item.get('type') == 'text' and text_idx < len(text_items):
+                truncated_content.append(text_items[text_idx])
+                text_idx += 1
+            elif item.get('type') in ['image', 'image_url'] and image_idx < len(image_items):
+                truncated_content.append(image_items[image_idx])
+                image_idx += 1
+                
+        return truncated_content
+
     def _ensure_image_url(self, image_path: str) -> str:
         """Convert image path to URL format for VLLM."""
         prefixes = ['http://', 'https://', 'file://', 'data:image']
@@ -344,6 +434,33 @@ class molmo(BaseModel):
     def generate_inner_transformers(self, message, dataset=None):
         from transformers import GenerationConfig
         prompt, image_path = self.message_to_promptimg(message, dataset=dataset)
+
+        # Apply truncation to prompt if needed
+        if self.auto_truncate:
+            estimated_tokens = self._estimate_token_count(prompt)
+            available_tokens = self.max_context_length - self.max_new_tokens - 200  # Buffer for image tokens
+            
+            if estimated_tokens > available_tokens:
+                if self.verbose:
+                    logging.warning(
+                        f"Prompt too long ({estimated_tokens} tokens). Truncating to {available_tokens} tokens."
+                    )
+                # Calculate target length and truncate prompt
+                truncation_ratio = available_tokens / estimated_tokens
+                target_length = int(len(prompt) * truncation_ratio)
+                
+                # Keep beginning and end
+                start_length = target_length // 2
+                end_length = target_length - start_length
+                
+                if len(prompt) > start_length + end_length + 50:
+                    prompt = (
+                        prompt[:start_length] + 
+                        " ... [TRUNCATED] ... " + 
+                        prompt[-end_length:] if end_length > 0 else ""
+                    )
+                else:
+                    prompt = prompt[:target_length]
 
         image = Image.open(image_path)
         if image.mode != "RGB":
