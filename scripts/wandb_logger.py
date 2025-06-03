@@ -12,6 +12,12 @@ Usage:
 
     # Run evaluation and log to WandB in one command
     python scripts/wandb_logger.py --run-and-log --model GPT4o --dataset MMBench_DEV_EN
+
+    # Run evaluation with VLLM batch processing and log results
+    python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --dataset MMBench_DEV_EN --use-vllm --batch-size 4
+
+    # Run with verbose batch processing monitoring
+    python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --dataset MMBench_DEV_EN --use-vllm --batch-size 4 --verbose
 """
 
 import argparse
@@ -141,7 +147,9 @@ def log_to_wandb(
     result_files: List[str],
     project: str = "vlmeval-benchmark",
     tags: Optional[List[str]] = None,
-    notes: Optional[str] = None
+    notes: Optional[str] = None,
+    use_vllm: bool = False,
+    batch_size: Optional[int] = None
 ) -> str:
     """Log evaluation results to WandB."""
     
@@ -150,7 +158,9 @@ def log_to_wandb(
         "model": model_name,
         "dataset": dataset_name,
         "framework": "VLMEvalKit",
-        "result_files": [os.path.basename(f) for f in result_files]
+        "result_files": [os.path.basename(f) for f in result_files],
+        "use_vllm": use_vllm,
+        "batch_size": batch_size
     }
     
     # Add model-specific configuration
@@ -207,11 +217,23 @@ def run_evaluation_and_log(
     dataset_name: str, 
     work_dir: str = "./outputs",
     project: str = "vlmeval-benchmark",
+    use_vllm: bool = False,
+    batch_size: Optional[int] = None,
+    verbose: bool = False,
     additional_args: List[str] = None
 ) -> str:
     """Run VLMEvalKit evaluation and log results to WandB."""
     
     logger.info(f"Running evaluation for {model_name} on {dataset_name}")
+    
+    # Log batch processing configuration
+    if use_vllm:
+        if batch_size is not None:
+            logger.info(f"Using VLLM with batch processing: batch_size={batch_size}")
+        else:
+            logger.info("Using VLLM with sequential processing")
+    else:
+        logger.info("Using transformers backend")
     
     # Prepare run command
     cmd = [
@@ -220,6 +242,16 @@ def run_evaluation_and_log(
         "--data", dataset_name,
         "--work-dir", work_dir
     ]
+    
+    # Add VLLM and batch processing arguments
+    if use_vllm:
+        cmd.append("--use-vllm")
+        
+    if batch_size is not None:
+        cmd.extend(["--batch-size", str(batch_size)])
+        
+    if verbose:
+        cmd.append("--verbose")
     
     if additional_args:
         cmd.extend(additional_args)
@@ -277,6 +309,8 @@ def run_evaluation_and_log(
         dataset_name=dataset_name, 
         result_files=result_files,
         project=project,
+        use_vllm=use_vllm,
+        batch_size=batch_size,
         notes=f"Automated run via wandb_logger.py"
     )
     
@@ -344,10 +378,25 @@ def main():
     parser.add_argument("--tags", type=str, nargs="+", help="Additional tags for WandB run")
     parser.add_argument("--notes", type=str, help="Notes for WandB run")
     
+    # VLLM and batch processing arguments
+    parser.add_argument("--use-vllm", action="store_true", help="Use VLLM for inference")
+    parser.add_argument("--batch-size", type=int, help="Batch size for VLLM inference (requires --use-vllm)")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    
     # Pass through additional arguments to run.py
     parser.add_argument("--run-args", type=str, nargs=argparse.REMAINDER, help="Additional arguments for run.py")
     
     args = parser.parse_args()
+    
+    # Validate batch processing arguments
+    if args.batch_size is not None and not args.use_vllm:
+        logger.warning("--batch-size specified without --use-vllm. Batch processing requires VLLM backend.")
+        logger.info("Adding --use-vllm automatically.")
+        args.use_vllm = True
+    
+    if args.batch_size is not None and args.batch_size <= 1:
+        logger.warning(f"Invalid batch size {args.batch_size}. Batch size must be > 1. Disabling batch processing.")
+        args.batch_size = None
     
     # Initialize WandB if not already done
     if not wandb.api.api_key:
@@ -367,6 +416,9 @@ def main():
             dataset_name=args.dataset,
             work_dir=args.work_dir,
             project=args.project,
+            use_vllm=args.use_vllm,
+            batch_size=args.batch_size,
+            verbose=args.verbose,
             additional_args=args.run_args
         )
         

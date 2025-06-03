@@ -69,6 +69,10 @@ class molmo(BaseModel):
         self.max_context_length = kwargs.get('max_context_length', DEFAULT_MAX_CONTEXT_LENGTH)
         self.auto_truncate = kwargs.get('auto_truncate', True)
         
+        # Batch processing configuration
+        self.max_batch_size = kwargs.get('max_batch_size', 4)  # Default to VLLM's max_num_seqs
+        self.batch_timeout = kwargs.get('batch_timeout', 5.0)  # Seconds to wait for batch completion
+        
         if self.use_vllm:
             from vllm import LLM
             import os
@@ -560,3 +564,254 @@ class molmo(BaseModel):
             return self.generate_inner_vllm(message, dataset=dataset)
         else:
             return self.generate_inner_transformers(message, dataset=dataset)
+    
+    # =============================================================================
+    # BATCH PROCESSING METHODS (VLLM-ONLY)
+    # =============================================================================
+    
+    def _prepare_batch_content_vllm(self, batch_messages: list, dataset: str = None) -> list:
+        """Prepare a batch of content for VLLM inference."""
+        if not self.use_vllm:
+            raise ValueError("Batch processing is only available when use_vllm=True")
+            
+        batch_content = []
+        
+        for i, message in enumerate(batch_messages):
+            try:
+                content = self._prepare_content_vllm(message, dataset=dataset)
+                batch_content.append(content)
+            except Exception as e:
+                if self.verbose:
+                    logging.warning(f"Failed to prepare content for batch item {i}: {e}")
+                # Add empty content as placeholder to maintain batch alignment
+                batch_content.append([{"type": "text", "text": "Error in content preparation"}])
+        
+        return batch_content
+    
+    def _validate_batch_size(self, batch_size: int) -> int:
+        """Validate and adjust batch size based on limits."""
+        if batch_size <= 0:
+            return 1
+        if batch_size > self.max_batch_size:
+            if self.verbose:
+                logging.warning(f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}, using {self.max_batch_size}")
+            return self.max_batch_size
+        return batch_size
+    
+    def _estimate_batch_memory_usage(self, batch_content: list) -> float:
+        """Estimate memory usage for a batch (rough approximation)."""
+        total_tokens = 0
+        total_images = 0
+        
+        for content in batch_content:
+            for item in content:
+                if item.get('type') == 'text':
+                    total_tokens += self._estimate_token_count(item.get('text', ''))
+                elif item.get('type') in ['image', 'image_url']:
+                    total_images += 1
+        
+        # Rough memory estimation (in MB)
+        # Text tokens: ~4 bytes per token
+        # Images: ~50MB per image (conservative estimate for processed images)
+        memory_mb = (total_tokens * 4 / 1024 / 1024) + (total_images * 50)
+        return memory_mb
+    
+    def _split_oversized_batch(self, batch_content: list, max_memory_mb: float = 8000) -> list:
+        """Split batch if it's too large for memory."""
+        if not batch_content:
+            return []
+            
+        estimated_memory = self._estimate_batch_memory_usage(batch_content)
+        
+        if estimated_memory <= max_memory_mb or len(batch_content) <= 1:
+            return [batch_content]  # Single batch
+        
+        # Split in half and recursively check
+        mid = len(batch_content) // 2
+        left_batches = self._split_oversized_batch(batch_content[:mid], max_memory_mb)
+        right_batches = self._split_oversized_batch(batch_content[mid:], max_memory_mb)
+        
+        return left_batches + right_batches
+    
+    def generate_batch_vllm(self, batch_messages: list, dataset: str = None, batch_size: int = None) -> list:
+        """Generate responses for a batch of messages using VLLM.
+        
+        Args:
+            batch_messages: List of message dictionaries to process
+            dataset: Dataset name for context-specific processing
+            batch_size: Override default batch size (will be validated)
+            
+        Returns:
+            List of generated responses in the same order as input
+            
+        Raises:
+            ValueError: If VLLM is not enabled
+            RuntimeError: If batch processing fails
+        """
+        if not self.use_vllm:
+            raise ValueError("Batch processing requires use_vllm=True")
+        
+        if not batch_messages:
+            return []
+        
+        # Validate batch size
+        if batch_size is None:
+            batch_size = min(len(batch_messages), self.max_batch_size)
+        else:
+            batch_size = self._validate_batch_size(batch_size)
+        
+        # If batch size is 1 or we only have 1 message, use single generation
+        if batch_size == 1 or len(batch_messages) == 1:
+            return [self.generate_inner_vllm(msg, dataset=dataset) for msg in batch_messages]
+        
+        # Process in batches
+        all_results = []
+        
+        for i in range(0, len(batch_messages), batch_size):
+            batch_chunk = batch_messages[i:i + batch_size]
+            
+            try:
+                # Prepare batch content
+                batch_content = self._prepare_batch_content_vllm(batch_chunk, dataset=dataset)
+                
+                # Check if batch needs splitting due to memory constraints
+                content_batches = self._split_oversized_batch(batch_content)
+                
+                batch_results = []
+                for content_batch in content_batches:
+                    chunk_results = self._process_vllm_batch(content_batch, dataset=dataset)
+                    batch_results.extend(chunk_results)
+                
+                all_results.extend(batch_results)
+                
+            except Exception as e:
+                if self.verbose:
+                    logging.error(f"Batch processing failed for chunk {i//batch_size + 1}, falling back to sequential: {e}")
+                
+                # Fallback to sequential processing for this chunk
+                for msg in batch_chunk:
+                    try:
+                        result = self.generate_inner_vllm(msg, dataset=dataset)
+                        all_results.append(result)
+                    except Exception as seq_e:
+                        if self.verbose:
+                            logging.error(f"Sequential fallback also failed: {seq_e}")
+                        all_results.append("ERROR: Generation failed")
+        
+        return all_results
+    
+    def _process_vllm_batch(self, batch_content: list, dataset: str = None) -> list:
+        """Process a single batch through VLLM."""
+        from vllm import SamplingParams
+        
+        if not batch_content:
+            return []
+        
+        # Prepare VLLM inputs
+        vllm_inputs = []
+        
+        for i, content in enumerate(batch_content):
+            try:
+                # Extract images and text from content
+                images = []
+                text_parts = []
+                
+                for item in content:
+                    if item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+                    elif item.get("type") == "image_url":
+                        image_url = item["image_url"]["url"]
+                        if image_url.startswith('file://'):
+                            image_path = image_url[7:]  # Remove 'file://' prefix
+                            from PIL import Image
+                            image = Image.open(image_path)
+                            if image.mode != "RGB":
+                                image = image.convert("RGB")
+                            images.append(image)
+                
+                # Combine text parts
+                prompt = " ".join(text_parts)
+                
+                # Create VLLM input
+                if images:
+                    vllm_input = {
+                        "prompt": prompt,
+                        "multi_modal_data": {"image": images},
+                    }
+                else:
+                    vllm_input = {"prompt": prompt}
+                
+                vllm_inputs.append(vllm_input)
+                
+            except Exception as e:
+                if self.verbose:
+                    logging.warning(f"Failed to prepare VLLM input for batch item {i}: {e}")
+                # Add fallback input
+                vllm_inputs.append({"prompt": "Error in input preparation"})
+        
+        # Set up sampling parameters
+        sampling_params = SamplingParams(
+            temperature=self.temperature,
+            max_tokens=self.max_new_tokens,
+            stop=["<|endoftext|>"]  # Molmo stop token
+        )
+        
+        # Generate with VLLM batch processing
+        try:
+            if self.verbose:
+                print(f'\\033[36m[VLLM BATCH] Processing {len(vllm_inputs)} items\\033[0m')
+            
+            outputs = self.llm.generate(vllm_inputs, sampling_params=sampling_params)
+            
+            # Extract results
+            results = []
+            for i, output in enumerate(outputs):
+                try:
+                    generated_text = output.outputs[0].text.strip()
+                    
+                    # Apply dataset-specific post-processing
+                    if dataset in ['AI2D_TEST', 'AI2D_TEST_NO_MASK']:
+                        # Get original prompt for post-processing
+                        original_prompt = vllm_inputs[i].get("prompt", "")
+                        if 'ai2_diagram_no_letter' in original_prompt:
+                            try:
+                                options = original_prompt.split('\\n')[1:]
+                                if generated_text in options:
+                                    answer = options.index(generated_text)
+                                    generated_text = chr(answer + ord('A'))
+                            except (IndexError, ValueError):
+                                pass  # Keep original text if parsing fails
+                    
+                    results.append(generated_text)
+                    
+                    if self.verbose:
+                        print(f'\\033[32m[VLLM BATCH] Item {i}: {generated_text[:50]}...\\033[0m')
+                        
+                except Exception as e:
+                    if self.verbose:
+                        logging.warning(f"Failed to process output for batch item {i}: {e}")
+                    results.append("ERROR: Output processing failed")
+            
+            return results
+            
+        except Exception as e:
+            logging.error(f"VLLM batch generation failed: {e}")
+            # Return error responses for all items
+            return ["ERROR: Batch generation failed"] * len(vllm_inputs)
+    
+    def supports_batch_processing(self) -> bool:
+        """Check if this model instance supports batch processing."""
+        return self.use_vllm
+    
+    def get_optimal_batch_size(self, estimated_items: int = None) -> int:
+        """Get the optimal batch size for current configuration."""
+        if not self.use_vllm:
+            return 1
+        
+        # Consider GPU memory and model configuration
+        base_batch_size = min(self.max_batch_size, 4)  # Conservative default
+        
+        if estimated_items is not None and estimated_items < base_batch_size:
+            return estimated_items
+            
+        return base_batch_size

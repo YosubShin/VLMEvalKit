@@ -187,7 +187,9 @@ You can launch the evaluation by setting either --data and --model or --config.
     # Reuse-aux: if set, when reuse is True, will also reuse the auxiliary evaluation files
     parser.add_argument('--reuse-aux', type=bool, default=True, help='reuse auxiliary evaluation files')
     parser.add_argument(
-        '--use-vllm', action='store_true', help='use vllm to generate, the flag is only supported in Llama4 for now')
+        '--use-vllm', action='store_true', help='use vllm to generate, supported models: Molmo, Qwen2-VL, Llama4, Gemma3')
+    parser.add_argument(
+        '--batch-size', type=int, default=None, help='batch size for VLLM inference (only works with --use-vllm)')
 
     args = parser.parse_args()
     return args
@@ -371,7 +373,8 @@ def main():
                         verbose=args.verbose,
                         api_nproc=args.api_nproc,
                         ignore_failed=args.ignore,
-                        use_vllm=args.use_vllm)
+                        use_vllm=args.use_vllm,
+                        batch_size=args.batch_size)
 
                 # Set the judge kwargs first before evaluation or dumping
 
