@@ -199,6 +199,19 @@ model = molmo(
 
 ## Performance Considerations
 
+### Batching Behavior
+
+**VLLM Configuration:**
+- `max_num_seqs=4`: Can process up to 4 sequences simultaneously  
+- **Current Usage**: VLMEvalKit processes one sample at a time, so batching is limited
+- **Memory Management**: VLLM automatically adjusts batch size based on available GPU memory
+- **Throughput**: Still faster than transformers due to optimized attention and memory management
+
+**Output Verbosity:**
+- VLLM progress bars are automatically suppressed for cleaner output
+- Use `--verbose` flag to see token counts and processing details
+- Logging level set to WARNING to reduce noise
+
 ### GPU Requirements
 
 | Model | Minimum VRAM | Recommended VRAM | Tensor Parallel |

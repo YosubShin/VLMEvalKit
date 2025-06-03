@@ -71,6 +71,16 @@ class molmo(BaseModel):
         
         if self.use_vllm:
             from vllm import LLM
+            import os
+            
+            # Suppress VLLM verbose output
+            os.environ['VLLM_LOGGING_LEVEL'] = 'WARNING'
+            os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+            
+            # Suppress VLLM progress bars
+            import logging
+            logging.getLogger("vllm").setLevel(logging.WARNING)
+            
             gpu_count = torch.cuda.device_count()
             if gpu_count >= 8:
                 tp_size = 8
@@ -100,15 +110,20 @@ class molmo(BaseModel):
                 # Use conservative context length that accounts for image tokens
                 max_model_len = min(4000, self.max_context_length + 500)  # Allow some headroom for VLLM
                 
+            # Configure VLLM with optimized settings for Molmo
             self.llm = LLM(
                 model=self.model_path,
-                max_num_seqs=4,
+                max_num_seqs=4,  # Can batch up to 4 sequences simultaneously
                 max_model_len=max_model_len,
                 limit_mm_per_prompt={"image": self.limit_mm_per_prompt},  # 1 image per prompt for Molmo
                 tensor_parallel_size=tp_size,
                 gpu_memory_utilization=kwargs.get("gpu_utils", 0.9),
                 trust_remote_code=True,  # Required for Molmo
+                disable_log_stats=True,  # Reduce logging verbosity
             )
+            
+            if self.verbose:
+                logging.info(f"VLLM initialized: max_num_seqs={4}, max_model_len={max_model_len}, tp_size={tp_size}")
             
         else:
             if '72b' not in model_path.lower():
@@ -415,9 +430,8 @@ class molmo(BaseModel):
                     prompt = prompt[:target_chars//2] + " ... [TRUNCATED] ... " + prompt[-target_chars//4:]
         
         if self.verbose:
-            print(f'\\033[31mVLLM Prompt: {prompt[:100]}...\\033[0m')
-            print(f'\\033[31mVLLM Images: {len(images)}\\033[0m')
-            print(f'\\033[31mEstimated tokens: {self._estimate_token_count(prompt)}\\033[0m')
+            estimated_tokens = self._estimate_token_count(prompt)
+            print(f'\\033[36m[VLLM] Prompt tokens: {estimated_tokens}, Images: {len(images)}\\033[0m')
         
         # Set up sampling parameters
         sampling_params = SamplingParams(
