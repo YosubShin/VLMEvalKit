@@ -39,3 +39,4 @@ validators
 xlsxwriter
 tensorflow
 wandb
+vllm>=0.6.4

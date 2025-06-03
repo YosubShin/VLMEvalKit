@@ -43,6 +43,7 @@ def test_molmo_vllm():
         print(f"   ✓ Model loaded: {model_vllm.model_name}")
         print(f"   ✓ Use VLLM: {model_vllm.use_vllm}")
         print(f"   ✓ Image limit per prompt: {model_vllm.limit_mm_per_prompt}")
+        print(f"   ✓ Max context length: {model_vllm.max_context_length}")
     except ImportError as e:
         print(f"   ⚠ VLLM not installed, skipping test: {e}")
         return True

@@ -86,14 +86,23 @@ class molmo(BaseModel):
             
             if os.environ.get('VLLM_WORKER_MULTIPROC_METHOD') != 'spawn':
                 logging.warning(
-                    'VLLM_WORKER_MULTIPROC_METHOD is not set to spawn.'
+                    'VLLM_WORKER_MULTIPROC_METHOD is not set to spawn. '
                     'Use \'export VLLM_WORKER_MULTIPROC_METHOD=spawn\' to avoid potential multi-process issues'
                 )
+                # Automatically set it for this process
+                os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
             
+            # Determine appropriate max_model_len for Molmo
+            # Molmo models typically have max_position_embeddings=4096
+            max_model_len = kwargs.get("max_model_len", None)
+            if max_model_len is None:
+                # Use model's actual context length (4096 for most Molmo models)
+                max_model_len = self.max_context_length
+                
             self.llm = LLM(
                 model=self.model_path,
                 max_num_seqs=4,
-                max_model_len=16384,  # Adjusted for Molmo
+                max_model_len=max_model_len,
                 limit_mm_per_prompt={"image": self.limit_mm_per_prompt},
                 tensor_parallel_size=tp_size,
                 gpu_memory_utilization=kwargs.get("gpu_utils", 0.9),

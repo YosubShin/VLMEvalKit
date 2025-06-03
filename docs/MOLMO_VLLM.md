@@ -188,7 +188,7 @@ model = molmo(
 
 | Parameter | Value | Description |
 |-----------|--------|-------------|
-| `max_model_len` | 16384 | Maximum sequence length |
+| `max_model_len` | 4096 | Maximum sequence length (Molmo's actual context length) |
 | `limit_mm_per_prompt` | 24 | Maximum images per prompt |
 | `tensor_parallel_size` | auto | Determined by available GPUs |
 
@@ -296,6 +296,21 @@ model = molmo(
     verbose=True,           # Shows when truncation occurs
     max_context_length=4096 # Adjust context length if needed
 )
+```
+
+#### 6. Max Model Length Error (FIXED)
+```
+ValueError: User-specified max_model_len (16384) is greater than the derived max_model_len (max_position_embeddings=4096)
+```
+**Solution**: This error has been fixed in the latest version
+- Molmo models have a maximum context length of 4096 tokens
+- VLLM configuration now automatically uses the correct max_model_len (4096)
+- The auto-truncation feature ensures inputs fit within this limit
+- If you need to override: set environment variable `VLLM_ALLOW_LONG_MAX_MODEL_LEN=1`
+
+```bash
+# If you still encounter this error, try:
+export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 ```
 
 ### Debug Mode
