@@ -61,7 +61,7 @@ class molmo(BaseModel):
         self.limit_mm_per_prompt = VLLM_MAX_IMAGE_INPUT_NUM
         
         # Generation parameters
-        self.max_new_tokens = kwargs.get('max_new_tokens', 200)
+        self.max_new_tokens = kwargs.get('max_new_tokens', 4096)
         self.temperature = kwargs.get('temperature', 0.0)
         self.verbose = kwargs.get('verbose', False)
         
