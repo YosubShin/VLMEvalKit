@@ -245,8 +245,13 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             MODEL_CLS = Qwen2_5OmniForConditionalGeneration
             self.processor = Qwen2_5OmniProcessor.from_pretrained(model_path)
         elif listinstr(['2.5', '2_5', 'qwen25'], model_path.lower()):
-            from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-            MODEL_CLS = Qwen2_5_VLForConditionalGeneration
+            try:
+                from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+                MODEL_CLS = Qwen2_5_VLForConditionalGeneration
+            except ImportError:
+                logging.warning("Qwen2_5_VLForConditionalGeneration not found, using AutoModelForVision2Seq instead")
+                from transformers import AutoModelForVision2Seq, AutoProcessor
+                MODEL_CLS = AutoModelForVision2Seq
             self.processor = AutoProcessor.from_pretrained(model_path)
         else:
             from transformers import Qwen2VLForConditionalGeneration, Qwen2VLProcessor
