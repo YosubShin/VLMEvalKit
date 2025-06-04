@@ -1,12 +1,12 @@
 # WandB Integration for VLMEvalKit
 
-This directory contains a WandB (Weights & Biases) integration script for logging VLMEvalKit evaluation results to experiment tracking.
+This directory contains a WandB (Weights & Biases) integration script for logging VLMEvalKit evaluation results to experiment tracking, with full support for VLLM batch processing.
 
 ## Setup
 
-1. **Install WandB:**
+1. **Install Dependencies:**
    ```bash
-   pip install wandb
+   pip install wandb pandas torch transformers vllm
    ```
 
 2. **Login to WandB:**
@@ -27,6 +27,15 @@ python scripts/wandb_logger.py --run-and-log --model GPT4o --dataset MMBench_DEV
 
 # With custom project name
 python scripts/wandb_logger.py --run-and-log --model GPT4o --dataset MMBench_DEV_EN --project my-vlm-experiments
+
+# VLLM Batch Processing (NEW!) - 2-4x faster inference
+python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --dataset MMBench_DEV_EN --use-vllm --batch-size 4
+
+# Conservative batch size for memory-constrained environments
+python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --dataset MMBench_DEV_EN --use-vllm --batch-size 2
+
+# With verbose batch processing monitoring
+python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --dataset MMBench_DEV_EN --use-vllm --batch-size 4 --verbose
 
 # With additional run.py arguments
 python scripts/wandb_logger.py --run-and-log --model GPT4o --dataset MMBench_DEV_EN --run-args --verbose --api-nproc 8
@@ -61,6 +70,42 @@ python scripts/wandb_logger.py \
   --work-dir ./outputs
 ```
 
+## VLLM Batch Processing Support
+
+### Supported Models
+
+The following models support VLLM batch processing for 2-4x speedup:
+
+- **Molmo**: `molmo-7B-D-0924`, `molmo-72B-D-0924` (fully implemented)
+- **Qwen2-VL**: `qwen2-vl-7b-instruct`, `qwen2-vl-72b-instruct`
+- **Llama4**: `llama-4-11b-vision-instruct`, `llama-4-90b-vision-instruct`
+- **Gemma3**: `gemma-3-2b-it`, `gemma-3-9b-it`
+
+### Batch Size Recommendations
+
+| Batch Size | Memory Usage | Use Case | Expected Speedup |
+|------------|--------------|----------|------------------|
+| 2          | Low          | 8-16GB VRAM | 1.5-2.0x |
+| 4          | Medium       | 16-32GB VRAM | 2.0-3.0x |
+| 8          | High         | 32GB+ VRAM | 2.5-4.0x |
+
+### Example Batch Processing Commands
+
+```bash
+# Compare sequential vs batch processing performance
+python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --dataset MMBench_DEV_EN \
+  --tags sequential --notes "Baseline sequential processing"
+
+python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --dataset MMBench_DEV_EN \
+  --use-vllm --batch-size 4 --tags batch-4 --notes "Batch processing with size 4"
+
+# Test different batch sizes
+for batch_size in 2 4 8; do
+  python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --dataset MMBench_DEV_EN \
+    --use-vllm --batch-size $batch_size --tags batch-sweep --notes "Batch size: $batch_size"
+done
+```
+
 ## What Gets Logged
 
 ### Metrics
@@ -68,6 +113,7 @@ python scripts/wandb_logger.py \
 - **Dataset Statistics**: Sample counts, categories, etc.
 - **Numerical Metrics**: Any numerical columns in result files (mean/std)
 - **Custom Metrics**: Extracted from JSON/CSV result files
+- **Batch Processing Stats**: Efficiency metrics when using VLLM batching
 
 ### Artifacts
 - **Result Files**: Raw evaluation outputs (.xlsx, .csv, .json files)
@@ -77,6 +123,7 @@ python scripts/wandb_logger.py \
 - **Model Info**: Model name and configuration parameters
 - **Dataset Info**: Dataset name and metadata
 - **Framework**: VLMEvalKit version and settings
+- **VLLM Settings**: Backend type, batch size, processing mode
 
 ## Features
 

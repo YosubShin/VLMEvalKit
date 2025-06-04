@@ -4,20 +4,26 @@ WandB Logger for VLMEvalKit
 Log VLMEvalKit evaluation results to Weights & Biases for experiment tracking.
 
 Usage:
-    # Log results from a specific run
+    # Log results from a specific run (single dataset)
     python scripts/wandb_logger.py --model GPT4o --dataset MMBench_DEV_EN --work-dir ./outputs
+
+    # Log results from multiple datasets (like run.py)
+    python scripts/wandb_logger.py --model GPT4o --data MMBench_DEV_EN MMBench_DEV_CN MMMU_DEV_VAL --work-dir ./outputs
 
     # Log all existing results in work directory
     python scripts/wandb_logger.py --log-all --work-dir ./outputs
 
-    # Run evaluation and log to WandB in one command
+    # Run evaluation and log to WandB in one command (single dataset)
     python scripts/wandb_logger.py --run-and-log --model GPT4o --dataset MMBench_DEV_EN
 
-    # Run evaluation with VLLM batch processing and log results
-    python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --dataset MMBench_DEV_EN --use-vllm --batch-size 4
+    # Run evaluation for multiple datasets and log to WandB
+    python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN MMBench_DEV_CN MMMU_DEV_VAL
+
+    # Run evaluation with VLLM batch processing and log results (multiple datasets)
+    python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --data MMBench_DEV_EN MMMU_DEV_VAL --use-vllm --batch-size 4
 
     # Run with verbose batch processing monitoring
-    python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --dataset MMBench_DEV_EN --use-vllm --batch-size 4 --verbose
+    python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 4 --verbose
 """
 
 import argparse
@@ -214,17 +220,17 @@ def log_to_wandb(
 
 def run_evaluation_and_log(
     model_name: str,
-    dataset_name: str, 
+    dataset_names: List[str], 
     work_dir: str = "./outputs",
     project: str = "vlmeval-benchmark",
     use_vllm: bool = False,
     batch_size: Optional[int] = None,
     verbose: bool = False,
     additional_args: List[str] = None
-) -> str:
+) -> List[str]:
     """Run VLMEvalKit evaluation and log results to WandB."""
     
-    logger.info(f"Running evaluation for {model_name} on {dataset_name}")
+    logger.info(f"Running evaluation for {model_name} on {len(dataset_names)} datasets: {', '.join(dataset_names)}")
     
     # Log batch processing configuration
     if use_vllm:
@@ -239,9 +245,14 @@ def run_evaluation_and_log(
     cmd = [
         sys.executable, "run.py",
         "--model", model_name,
-        "--data", dataset_name,
-        "--work-dir", work_dir
+        "--data"
     ]
+    
+    # Add all dataset names to the command
+    cmd.extend(dataset_names)
+    
+    # Add work directory
+    cmd.extend(["--work-dir", work_dir])
     
     # Add VLLM and batch processing arguments
     if use_vllm:
@@ -295,27 +306,31 @@ def run_evaluation_and_log(
             logger.error(f"Command output: {e.output}")
         raise
     
-    # Find and log result files
-    result_files = find_evaluation_files(work_dir, model_name, dataset_name)
-    if not result_files:
-        logger.warning(f"No result files found for {model_name}_{dataset_name}")
-        return None
+    # Find and log result files for each dataset
+    run_urls = []
+    for dataset_name in dataset_names:
+        result_files = find_evaluation_files(work_dir, model_name, dataset_name)
+        if not result_files:
+            logger.warning(f"No result files found for {model_name}_{dataset_name}")
+            continue
+            
+        logger.info(f"Found {len(result_files)} result files for {dataset_name}: {result_files}")
         
-    logger.info(f"Found {len(result_files)} result files: {result_files}")
+        # Log to WandB
+        run_url = log_to_wandb(
+            model_name=model_name,
+            dataset_name=dataset_name, 
+            result_files=result_files,
+            project=project,
+            use_vllm=use_vllm,
+            batch_size=batch_size,
+            notes=f"Automated run via wandb_logger.py"
+        )
+        
+        logger.info(f"Results for {dataset_name} logged to WandB: {run_url}")
+        run_urls.append(run_url)
     
-    # Log to WandB
-    run_url = log_to_wandb(
-        model_name=model_name,
-        dataset_name=dataset_name, 
-        result_files=result_files,
-        project=project,
-        use_vllm=use_vllm,
-        batch_size=batch_size,
-        notes=f"Automated run via wandb_logger.py"
-    )
-    
-    logger.info(f"Results logged to WandB: {run_url}")
-    return run_url
+    return run_urls
 
 
 def log_all_existing_results(work_dir: str, project: str = "vlmeval-benchmark"):
@@ -370,7 +385,8 @@ def log_all_existing_results(work_dir: str, project: str = "vlmeval-benchmark"):
 def main():
     parser = argparse.ArgumentParser(description="Log VLMEvalKit results to WandB")
     parser.add_argument("--model", type=str, help="Model name")
-    parser.add_argument("--dataset", type=str, help="Dataset name") 
+    parser.add_argument("--dataset", type=str, help="Dataset name (for single dataset compatibility)")
+    parser.add_argument("--data", type=str, nargs="+", help="Dataset names (supports multiple datasets like run.py)")
     parser.add_argument("--work-dir", type=str, default="./outputs", help="Work directory")
     parser.add_argument("--project", type=str, default="vlmeval-benchmark", help="WandB project name")
     parser.add_argument("--run-and-log", action="store_true", help="Run evaluation and log results")
@@ -387,6 +403,13 @@ def main():
     parser.add_argument("--run-args", type=str, nargs=argparse.REMAINDER, help="Additional arguments for run.py")
     
     args = parser.parse_args()
+    
+    # Handle dataset arguments - prioritize --data over --dataset for consistency with run.py
+    datasets = []
+    if args.data:
+        datasets = args.data
+    elif args.dataset:
+        datasets = [args.dataset]
     
     # Validate batch processing arguments
     if args.batch_size is not None and not args.use_vllm:
@@ -407,13 +430,13 @@ def main():
         log_all_existing_results(args.work_dir, args.project)
         
     elif args.run_and_log:
-        if not args.model or not args.dataset:
-            logger.error("--model and --dataset are required for --run-and-log")
+        if not args.model or not datasets:
+            logger.error("--model and datasets (--data or --dataset) are required for --run-and-log")
             return
             
-        run_evaluation_and_log(
+        run_urls = run_evaluation_and_log(
             model_name=args.model,
-            dataset_name=args.dataset,
+            dataset_names=datasets,
             work_dir=args.work_dir,
             project=args.project,
             use_vllm=args.use_vllm,
@@ -422,25 +445,38 @@ def main():
             additional_args=args.run_args
         )
         
-    elif args.model and args.dataset:
-        # Log existing results for specific model/dataset
-        result_files = find_evaluation_files(args.work_dir, args.model, args.dataset)
-        if not result_files:
-            logger.error(f"No result files found for {args.model} x {args.dataset}")
-            return
-            
-        run_url = log_to_wandb(
-            model_name=args.model,
-            dataset_name=args.dataset,
-            result_files=result_files,
-            project=args.project,
-            tags=args.tags,
-            notes=args.notes
-        )
-        logger.info(f"Results logged to WandB: {run_url}")
+        if run_urls:
+            logger.info(f"Successfully logged {len(run_urls)} datasets to WandB")
+            for i, url in enumerate(run_urls):
+                logger.info(f"  {datasets[i]}: {url}")
+        
+    elif args.model and datasets:
+        # Log existing results for specific model/datasets
+        logged_count = 0
+        for dataset_name in datasets:
+            result_files = find_evaluation_files(args.work_dir, args.model, dataset_name)
+            if not result_files:
+                logger.warning(f"No result files found for {args.model} x {dataset_name}")
+                continue
+                
+            run_url = log_to_wandb(
+                model_name=args.model,
+                dataset_name=dataset_name,
+                result_files=result_files,
+                project=args.project,
+                tags=args.tags,
+                notes=args.notes
+            )
+            logger.info(f"Results for {dataset_name} logged to WandB: {run_url}")
+            logged_count += 1
+        
+        if logged_count == 0:
+            logger.error(f"No results found for any of the specified datasets: {datasets}")
+        else:
+            logger.info(f"Successfully logged {logged_count}/{len(datasets)} datasets")
         
     else:
-        logger.error("Please specify either --log-all or provide --model and --dataset")
+        logger.error("Please specify either --log-all or provide --model and datasets (--data or --dataset)")
         parser.print_help()
 
 
