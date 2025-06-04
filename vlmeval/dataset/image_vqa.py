@@ -612,6 +612,50 @@ class Physics_yale(ImageBaseDataset):
             data['log'] = [ans[idx]['log'] for idx in data['index']]
             dump(data, storage)
             
+            # Save raw model responses if detailed evaluation is enabled
+            save_detailed_eval = judge_kwargs.get('save_detailed_eval', False)
+            if save_detailed_eval:
+                raw_responses = []
+                for idx in data['index']:
+                    row_data = data[data['index'] == idx]
+                    if len(row_data) > 0:
+                        raw_response_entry = {
+                            'index': idx,
+                            'question': row_data['question'].iloc[0],
+                            'raw_model_response': row_data['prediction'].iloc[0],
+                            'ground_truth_answer': row_data['answer'].iloc[0],
+                            'evaluation_result': ans.get(idx, {}).get('res', False),
+                            'timestamp': __import__('time').strftime('%Y-%m-%d %H:%M:%S'),
+                            'dataset_name': self.dataset if hasattr(self, 'dataset') else 'physics_yale'
+                        }
+                        
+                        # Add image information if available
+                        if 'image' in row_data.columns:
+                            raw_response_entry['image_path'] = row_data['image'].iloc[0]
+                        
+                        # Add category information if available
+                        if 'category' in row_data.columns:
+                            raw_response_entry['category'] = row_data['category'].iloc[0]
+                            
+                        raw_responses.append(raw_response_entry)
+                
+                if raw_responses:
+                    response_format = judge_kwargs.get('response_format', 'json')
+                    raw_file = storage.replace('.xlsx', f'_raw_responses.{response_format}')
+                    
+                    if response_format == 'json':
+                        import json
+                        with open(raw_file, 'w', encoding='utf-8') as f:
+                            json.dump(raw_responses, f, indent=2, ensure_ascii=False)
+                    elif response_format == 'csv':
+                        import pandas as pd
+                        pd.DataFrame(raw_responses).to_csv(raw_file, index=False, encoding='utf-8')
+                    elif response_format == 'xlsx':
+                        import pandas as pd
+                        pd.DataFrame(raw_responses).to_excel(raw_file, index=False)
+                    
+                    print(f"Raw model responses saved to: {raw_file}")
+            
             # Save judge responses if capturing is enabled
             if capture_judge_responses:
                 judge_responses = []
@@ -849,13 +893,17 @@ class OlympiadBench(ImageBaseDataset):
         if not osp.exists(result_file):
             data = load(eval_file)
             scorez = []
+            
+            # Prepare raw response saving if detailed evaluation is enabled
+            save_detailed_eval = judge_kwargs.get('save_detailed_eval', False)
+            raw_responses = [] if save_detailed_eval else None
 
             for i in tqdm(data.iterrows()):
                 line = i[1]
-                model_answer = line['prediction']
+                raw_model_response = line['prediction']  # Store raw response before processing
                 is_chinese = 'zh' in line['source']
                 model_answer = extract_answer(is_chinese,
-                                              model_answer,
+                                              raw_model_response,
                                               is_deepseek=False)
                 answer_type = line['answer_type']
 
@@ -879,9 +927,50 @@ class OlympiadBench(ImageBaseDataset):
                     else:
                         judge_result = judger.judge(model_answer, final_answer)
                 scorez.append(judge_result)
+                
+                # Collect raw response data if saving is enabled
+                if save_detailed_eval:
+                    raw_response_entry = {
+                        'index': line.get('index', i[0]),
+                        'question': line.get('question', ''),
+                        'raw_model_response': raw_model_response,
+                        'processed_model_answer': model_answer,
+                        'ground_truth_answer': final_answer,
+                        'evaluation_result': judge_result,
+                        'timestamp': __import__('time').strftime('%Y-%m-%d %H:%M:%S'),
+                        'dataset_name': line.get('source', 'olympiadbench'),
+                        'language': 'chinese' if is_chinese else 'english',
+                        'answer_type': str(answer_type) if str(answer_type) != 'nan' else 'unknown',
+                        'subject': 'math' if 'maths' in line.get('source', '') else 'physics'
+                    }
+                    
+                    # Add optional fields if available
+                    for field in ['image', 'category', 'unit', 'is_multiple_answer', 'error']:
+                        if field in line and str(line[field]) != 'nan':
+                            raw_response_entry[field] = line[field]
+                            
+                    raw_responses.append(raw_response_entry)
 
             data['score'] = scorez
             dump(data, result_file)
+            
+            # Save raw model responses if detailed evaluation is enabled
+            if save_detailed_eval and raw_responses:
+                response_format = judge_kwargs.get('response_format', 'json')
+                raw_file = result_file.replace('_judge_result.xlsx', f'_raw_responses.{response_format}')
+                
+                if response_format == 'json':
+                    import json
+                    with open(raw_file, 'w', encoding='utf-8') as f:
+                        json.dump(raw_responses, f, indent=2, ensure_ascii=False)
+                elif response_format == 'csv':
+                    import pandas as pd
+                    pd.DataFrame(raw_responses).to_csv(raw_file, index=False, encoding='utf-8')
+                elif response_format == 'xlsx':
+                    import pandas as pd
+                    pd.DataFrame(raw_responses).to_excel(raw_file, index=False)
+                
+                print(f"Raw model responses saved to: {raw_file}")
 
         judge_file = load(result_file)
 

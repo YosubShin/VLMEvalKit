@@ -211,18 +211,25 @@ Response Saving Options:
     --save-judge-responses: Save raw LLM judge responses with full explanations and reasoning
                            Currently supported: Yale_physics datasets (quantum_dataset, mechanics_dataset, 
                            atomic_dataset, electro_dataset, optics_dataset, statistics_dataset)
-    --save-detailed-eval: Save comprehensive evaluation data including intermediate steps  
+    --save-detailed-eval: Save raw model responses and comprehensive evaluation data
+                         Supported: Yale_physics, OlympiadBench, VMCBench_DEV datasets
     --response-format [json|csv|xlsx]: Format for saving detailed responses (default: json)
     
     Examples:
-        # Save judge responses for Yale physics datasets
-        python run.py --model GPT4o --data quantum_dataset --save-judge-responses
+        # Save raw model responses for Yale physics datasets
+        python run.py --model GPT4o --data quantum_dataset --save-detailed-eval
         
-        # Save all detailed evaluation data in Excel format
-        python run.py --model GPT4o --data mechanics_dataset --save-detailed-eval --response-format xlsx
+        # Save judge responses for Yale physics (LLM-judged datasets only)
+        python run.py --model GPT4o --data mechanics_dataset --save-judge-responses
         
-        # Save both judge responses and detailed evaluation
-        python run.py --model GPT4o --data atomic_dataset --save-judge-responses --save-detailed-eval
+        # Save both raw responses and judge responses in Excel format
+        python run.py --model GPT4o --data atomic_dataset --save-detailed-eval --save-judge-responses --response-format xlsx
+        
+        # Save raw responses for OlympiadBench
+        python run.py --model GPT4o --data OlympiadBench --save-detailed-eval
+        
+        # Save raw responses for VMCBench  
+        python run.py --model GPT4o --data VMCBench_DEV --save-detailed-eval
 """
     parser = argparse.ArgumentParser(description=help_msg, formatter_class=argparse.RawTextHelpFormatter)
     # Essential Args, Setting the Names of Datasets and Models
@@ -555,13 +562,21 @@ def main():
                             logger.info('\n' + tabulate(eval_results))
                     
                     # Note: Judge response saving is handled by individual benchmarks
-                    # Currently supported: Yale_physics (quantum_dataset, mechanics_dataset, etc.)
-                    # For other benchmarks, detailed responses may not be available
+                    # Currently supported: Yale_physics datasets (quantum_dataset, mechanics_dataset, etc.)
+                    # Raw model response saving supported: Yale_physics, OlympiadBench, VMCBench_DEV
                     if args.save_judge_responses and dataset_name not in [
                         'quantum_dataset', 'mechanics_dataset', 'atomic_dataset', 
                         'electro_dataset', 'optics_dataset', 'statistics_dataset'
                     ]:
                         logger.info(f"Judge response saving not yet implemented for {dataset_name}")
+                    
+                    if args.save_detailed_eval and dataset_name not in [
+                        'quantum_dataset', 'mechanics_dataset', 'atomic_dataset', 
+                        'electro_dataset', 'optics_dataset', 'statistics_dataset',
+                        'OlympiadBench', 'OlympiadBench_EN', 'OlympiadBench_CN',
+                        'VMCBench_DEV', 'VMCBench_TEST'
+                    ]:
+                        logger.info(f"Raw model response saving not yet implemented for {dataset_name}")
                     
                     # Save basic detailed evaluation structure if requested
                     if args.save_detailed_eval:

@@ -89,23 +89,32 @@ def test_run_py_flags():
         return False
 
 
-def test_yale_physics_class():
-    """Test that the Yale_physics class supports judge response capturing."""
+def test_dataset_classes():
+    """Test that the priority dataset classes support raw response saving."""
     try:
-        from vlmeval.dataset.image_vqa import Physics_yale
-        print("✓ Successfully imported Physics_yale class")
+        from vlmeval.dataset.image_vqa import Physics_yale, OlympiadBench
+        from vlmeval.dataset.image_mcq import VMCBenchDataset
+        print("✓ Successfully imported all priority dataset classes")
         
-        # Check that the evaluate method exists
-        if hasattr(Physics_yale, 'evaluate'):
-            print("✓ Physics_yale has evaluate method")
-        else:
-            print("✗ Physics_yale missing evaluate method")
-            return False
-            
-        return True
+        classes_to_test = [
+            ("Physics_yale", Physics_yale),
+            ("OlympiadBench", OlympiadBench), 
+            ("VMCBenchDataset", VMCBenchDataset)
+        ]
+        
+        all_passed = True
+        for class_name, class_obj in classes_to_test:
+            # Check that the evaluate method exists
+            if hasattr(class_obj, 'evaluate'):
+                print(f"✓ {class_name} has evaluate method")
+            else:
+                print(f"✗ {class_name} missing evaluate method")
+                all_passed = False
+                
+        return all_passed
         
     except ImportError as e:
-        print(f"✗ Failed to import Physics_yale class: {e}")
+        print(f"✗ Failed to import dataset classes: {e}")
         return False
     except Exception as e:
         print(f"✗ Unexpected error: {e}")
@@ -120,7 +129,7 @@ def main():
     tests = [
         ("Physics Evaluation Utils", test_physics_eval_utils),
         ("Run.py Command Line Flags", test_run_py_flags),
-        ("Yale_physics Class", test_yale_physics_class)
+        ("Priority Dataset Classes", test_dataset_classes)
     ]
     
     results = []
@@ -144,14 +153,24 @@ def main():
     print(f"\nOverall: {passed}/{len(results)} tests passed")
     
     if passed == len(results):
-        print("\n🎉 All tests passed! Judge response capturing is ready for Yale_physics datasets.")
+        print("\n🎉 All tests passed! Raw response and judge capturing is ready for all priority datasets.")
+        print("\nSupported datasets:")
+        print("  • Yale_physics: quantum_dataset, mechanics_dataset, atomic_dataset, electro_dataset, optics_dataset, statistics_dataset")
+        print("  • OlympiadBench: OlympiadBench, OlympiadBench_EN, OlympiadBench_CN") 
+        print("  • VMCBench_DEV: VMCBench_DEV, VMCBench_TEST")
         print("\nUsage examples:")
-        print("  # Save judge responses for quantum physics")
-        print("  python run.py --model GPT4o --data quantum_dataset --save-judge-responses")
-        print("\n  # Save detailed evaluation data in Excel format")
-        print("  python run.py --model GPT4o --data mechanics_dataset --save-detailed-eval --response-format xlsx")
+        print("  # Save raw model responses for quantum physics")
+        print("  python run.py --model GPT4o --data quantum_dataset --save-detailed-eval")
+        print("\n  # Save judge responses for Yale physics (LLM-judged datasets)")
+        print("  python run.py --model GPT4o --data mechanics_dataset --save-judge-responses")
+        print("\n  # Save both raw responses and judge responses in Excel format")
+        print("  python run.py --model GPT4o --data atomic_dataset --save-detailed-eval --save-judge-responses --response-format xlsx")
+        print("\n  # Save raw responses for OlympiadBench in JSON format")
+        print("  python run.py --model GPT4o --data OlympiadBench --save-detailed-eval --response-format json")
+        print("\n  # Save raw responses for VMCBench")
+        print("  python run.py --model GPT4o --data VMCBench_DEV --save-detailed-eval")
         print("\n  # Use with wandb logging")
-        print("  python scripts/wandb_logger.py --run-and-log --model GPT4o --data atomic_dataset --save-judge-responses")
+        print("  python scripts/wandb_logger.py --run-and-log --model GPT4o --data quantum_dataset --save-detailed-eval")
         return True
     else:
         print(f"\n❌ {len(results) - passed} tests failed. Please check the implementation.")
