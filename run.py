@@ -92,66 +92,6 @@ def create_detailed_eval_structure():
     }
 
 
-def enable_response_capturing(dataset, save_judge_responses=False, save_detailed_eval=False):
-    """Enable response capturing for datasets that support it."""
-    if not (save_judge_responses or save_detailed_eval):
-        return
-    
-    # Initialize storage on the dataset object
-    if save_judge_responses:
-        dataset._judge_responses = []
-    if save_detailed_eval:
-        dataset._detailed_eval_data = create_detailed_eval_structure()
-    
-    # Try to patch common judge classes if they're used
-    try:
-        # Look for OpenAI VLM judge in megabench
-        if hasattr(dataset, 'evaluator') and hasattr(dataset.evaluator, 'judges'):
-            for judge in dataset.evaluator.judges:
-                if hasattr(judge, 'call_openai_api'):
-                    patch_openai_judge(judge, dataset, save_judge_responses, save_detailed_eval)
-        
-        # Look for other judge patterns
-        if hasattr(dataset, 'evaluate') and save_judge_responses:
-            # Store reference to original evaluate method
-            original_evaluate = dataset.evaluate
-            
-            def wrapped_evaluate(*args, **kwargs):
-                # Set flags for the evaluation
-                kwargs['_capture_responses'] = True
-                kwargs['_dataset_ref'] = dataset
-                return original_evaluate(*args, **kwargs)
-            
-            dataset.evaluate = wrapped_evaluate
-            
-    except Exception as e:
-        logger = get_logger('RUN')
-        logger.warning(f'Could not enable response capturing: {e}')
-
-
-def patch_openai_judge(judge, dataset, save_judge_responses, save_detailed_eval):
-    """Patch OpenAI judge to capture responses."""
-    if not hasattr(judge, 'call_openai_api'):
-        return
-        
-    original_call = judge.call_openai_api
-    
-    def captured_call(*args, **kwargs):
-        result = original_call(*args, **kwargs)
-        
-        # Store the full response if enabled
-        if save_judge_responses and hasattr(dataset, '_judge_responses'):
-            response_data = {
-                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-                'input_args': str(args)[:500],  # Truncate for storage
-                'response': result,
-                'judge_type': type(judge).__name__
-            }
-            dataset._judge_responses.append(response_data)
-        
-        return result
-    
-    judge.call_openai_api = captured_call
 
 
 def build_model_from_config(cfg, model_name, use_vllm=False):
@@ -269,18 +209,20 @@ You can launch the evaluation by setting either --data and --model or --config.
 
 Response Saving Options:
     --save-judge-responses: Save raw LLM judge responses with full explanations and reasoning
+                           Currently supported: Yale_physics datasets (quantum_dataset, mechanics_dataset, 
+                           atomic_dataset, electro_dataset, optics_dataset, statistics_dataset)
     --save-detailed-eval: Save comprehensive evaluation data including intermediate steps  
     --response-format [json|csv|xlsx]: Format for saving detailed responses (default: json)
     
     Examples:
-        # Save judge responses in JSON format
-        python run.py --model GPT4o --data MMBench_DEV_EN --save-judge-responses
+        # Save judge responses for Yale physics datasets
+        python run.py --model GPT4o --data quantum_dataset --save-judge-responses
         
         # Save all detailed evaluation data in Excel format
-        python run.py --model GPT4o --data MMBench_DEV_EN --save-detailed-eval --response-format xlsx
+        python run.py --model GPT4o --data mechanics_dataset --save-detailed-eval --response-format xlsx
         
         # Save both judge responses and detailed evaluation
-        python run.py --model GPT4o --data MMBench_DEV_EN --save-judge-responses --save-detailed-eval
+        python run.py --model GPT4o --data atomic_dataset --save-judge-responses --save-detailed-eval
 """
     parser = argparse.ArgumentParser(description=help_msg, formatter_class=argparse.RawTextHelpFormatter)
     # Essential Args, Setting the Names of Datasets and Models
@@ -598,9 +540,6 @@ def main():
                     if eval_proxy is not None:
                         proxy_set(eval_proxy)
 
-                    # Enable response capturing if requested
-                    enable_response_capturing(dataset, args.save_judge_responses, args.save_detailed_eval)
-
                     # Perform the Evaluation
                     eval_results = dataset.evaluate(result_file, **judge_kwargs)
                     # Display Evaluation Results in Terminal
@@ -615,33 +554,29 @@ def main():
                                 eval_results = eval_results.T
                             logger.info('\n' + tabulate(eval_results))
                     
-                    # Save detailed responses if requested
-                    if args.save_judge_responses or args.save_detailed_eval:
+                    # Note: Judge response saving is handled by individual benchmarks
+                    # Currently supported: Yale_physics (quantum_dataset, mechanics_dataset, etc.)
+                    # For other benchmarks, detailed responses may not be available
+                    if args.save_judge_responses and dataset_name not in [
+                        'quantum_dataset', 'mechanics_dataset', 'atomic_dataset', 
+                        'electro_dataset', 'optics_dataset', 'statistics_dataset'
+                    ]:
+                        logger.info(f"Judge response saving not yet implemented for {dataset_name}")
+                    
+                    # Save basic detailed evaluation structure if requested
+                    if args.save_detailed_eval:
                         try:
-                            # Check if the dataset evaluation returned detailed data
-                            detailed_data = getattr(dataset, '_detailed_eval_data', None)
-                            judge_responses = getattr(dataset, '_judge_responses', None)
+                            basic_detailed = create_detailed_eval_structure()
+                            basic_detailed['final_scores'] = eval_results if isinstance(eval_results, dict) else eval_results.to_dict() if eval_results is not None else {}
+                            basic_detailed['model_name'] = model_name
+                            basic_detailed['dataset_name'] = dataset_name
                             
                             base_filename = osp.join(pred_root, f'{model_name}_{dataset_name}')
-                            
-                            if args.save_judge_responses and judge_responses:
-                                judge_filename = f'{base_filename}_judge_responses'
-                                save_detailed_responses(judge_responses, judge_filename, args.response_format)
-                            
-                            if args.save_detailed_eval and detailed_data:
-                                detailed_filename = f'{base_filename}_detailed_eval'
-                                save_detailed_responses(detailed_data, detailed_filename, args.response_format)
-                            elif args.save_detailed_eval:
-                                # Create basic detailed structure even if dataset doesn't provide it
-                                basic_detailed = create_detailed_eval_structure()
-                                basic_detailed['final_scores'] = eval_results if isinstance(eval_results, dict) else eval_results.to_dict() if eval_results is not None else {}
-                                basic_detailed['model_name'] = model_name
-                                basic_detailed['dataset_name'] = dataset_name
-                                detailed_filename = f'{base_filename}_detailed_eval'
-                                save_detailed_responses(basic_detailed, detailed_filename, args.response_format)
+                            detailed_filename = f'{base_filename}_detailed_eval'
+                            save_detailed_responses(basic_detailed, detailed_filename, args.response_format)
                                 
                         except Exception as e:
-                            logger.warning(f'Failed to save detailed responses: {e}')
+                            logger.warning(f'Failed to save detailed evaluation data: {e}')
 
                     # Restore the proxy
                     if eval_proxy is not None:

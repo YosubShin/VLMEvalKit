@@ -72,7 +72,7 @@ def _standardize_expr(expr):
     return simplify(expand(trigsimp(expr)))
 
 
-def is_equiv(model, expr1: str, expr2: str, verbose: bool = False) -> dict:
+def is_equiv(model, expr1: str, expr2: str, verbose: bool = False, capture_judge_responses: bool = False) -> dict:
     result_data = {
         "input_expressions": {"expr1": expr1, "expr2": expr2},
         "preprocessed_expressions": {},
@@ -87,6 +87,16 @@ def is_equiv(model, expr1: str, expr2: str, verbose: bool = False) -> dict:
             model.sys_prompt = Judge_SYS_PROMPT
             user_prompt = Judge_USER_PROMPT.format(expr1=expr1, expr2=expr2)
             generate_result = model.generate(user_prompt)
+            
+            # Capture judge response if enabled
+            if capture_judge_responses:
+                result_data["judge_response_1"] = {
+                    "prompt": user_prompt,
+                    "response": generate_result,
+                    "timestamp": __import__('time').strftime('%Y-%m-%d %H:%M:%S'),
+                    "reason": "text_based_comparison"
+                }
+            
             if generate_result and "true" in generate_result.lower():
                 result_data["llm_result"] = 1
             else:
@@ -120,6 +130,18 @@ def is_equiv(model, expr1: str, expr2: str, verbose: bool = False) -> dict:
             model.sys_prompt = Judge_SYS_PROMPT
             user_prompt = Judge_USER_PROMPT.format(expr1=expr1, expr2=expr2)
             generate_result = model.generate(user_prompt)
+            
+            # Capture judge response if enabled
+            if capture_judge_responses:
+                result_data["judge_response_2"] = {
+                    "prompt": user_prompt,
+                    "response": generate_result,
+                    "timestamp": __import__('time').strftime('%Y-%m-%d %H:%M:%S'),
+                    "reason": "sympy_failed_fallback_to_llm",
+                    "sympy_result": sympy_result,
+                    "sympy_error": result_data.get("error")
+                }
+            
             if generate_result and "true" in generate_result.lower():
                 result_data["llm_result"] = 1
             else:

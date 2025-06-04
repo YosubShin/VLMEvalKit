@@ -575,6 +575,15 @@ class Physics_yale(ImageBaseDataset):
 
             lt = len(data)
             lines = [data.iloc[i] for i in range(lt)]
+            
+            # Check if judge response capturing is enabled
+            capture_judge_responses = judge_kwargs.get('save_judge_responses', False)
+            
+            # Create wrapper function that includes the capture flag
+            def physics_eval_wrapper(args):
+                model, line = args
+                return PHYSIC_auxeval(model, line, capture_judge_responses=capture_judge_responses)
+            
             tups = [(model, line) for line in lines]
             indices = [line['index'] for line in lines]
 
@@ -586,7 +595,7 @@ class Physics_yale(ImageBaseDataset):
 
             if len(indices):
                 new_results = track_progress_rich(
-                    PHYSIC_auxeval,
+                    physics_eval_wrapper,
                     tups,
                     nproc=nproc,
                     chunksize=nproc,
@@ -602,6 +611,109 @@ class Physics_yale(ImageBaseDataset):
             data['res'] = [ans[idx]['res'] for idx in data['index']]
             data['log'] = [ans[idx]['log'] for idx in data['index']]
             dump(data, storage)
+            
+            # Save judge responses if capturing is enabled
+            if capture_judge_responses:
+                judge_responses = []
+                for idx in data['index']:
+                    if idx in ans and 'log' in ans[idx]:
+                        log_data = ans[idx]['log']
+                        # Check if judge responses were captured
+                        if isinstance(log_data, dict) and ('judge_response_1' in log_data or 'judge_response_2' in log_data):
+                            judge_response_entry = {
+                                'index': idx,
+                                'question': data[data['index'] == idx]['question'].iloc[0] if len(data[data['index'] == idx]) > 0 else '',
+                                'prediction': data[data['index'] == idx]['prediction'].iloc[0] if len(data[data['index'] == idx]) > 0 else '',
+                                'ground_truth': data[data['index'] == idx]['answer'].iloc[0] if len(data[data['index'] == idx]) > 0 else '',
+                                'evaluation_result': ans[idx]['res'],
+                            }
+                            
+                            # Add judge response 1 if present
+                            if 'judge_response_1' in log_data:
+                                judge_response_entry['judge_response_1'] = log_data['judge_response_1']
+                            
+                            # Add judge response 2 if present  
+                            if 'judge_response_2' in log_data:
+                                judge_response_entry['judge_response_2'] = log_data['judge_response_2']
+                            
+                            judge_responses.append(judge_response_entry)
+                
+                if judge_responses:
+                    # Save judge responses
+                    response_format = judge_kwargs.get('response_format', 'json')
+                    judge_file = storage.replace('.xlsx', f'_judge_responses.{response_format}')
+                    
+                    if response_format == 'json':
+                        import json
+                        with open(judge_file, 'w', encoding='utf-8') as f:
+                            json.dump(judge_responses, f, indent=2, ensure_ascii=False)
+                    elif response_format == 'csv':
+                        import pandas as pd
+                        # Flatten the nested judge response structure for CSV
+                        flattened_responses = []
+                        for resp in judge_responses:
+                            base_data = {k: v for k, v in resp.items() if not k.startswith('judge_response_')}
+                            
+                            if 'judge_response_1' in resp:
+                                jr1 = resp['judge_response_1']
+                                flattened_responses.append({
+                                    **base_data,
+                                    'judge_call': 1,
+                                    'judge_prompt': jr1.get('prompt', ''),
+                                    'judge_response': jr1.get('response', ''),
+                                    'judge_timestamp': jr1.get('timestamp', ''),
+                                    'judge_reason': jr1.get('reason', '')
+                                })
+                            
+                            if 'judge_response_2' in resp:
+                                jr2 = resp['judge_response_2']
+                                flattened_responses.append({
+                                    **base_data,
+                                    'judge_call': 2,
+                                    'judge_prompt': jr2.get('prompt', ''),
+                                    'judge_response': jr2.get('response', ''),
+                                    'judge_timestamp': jr2.get('timestamp', ''),
+                                    'judge_reason': jr2.get('reason', ''),
+                                    'sympy_result': jr2.get('sympy_result', ''),
+                                    'sympy_error': jr2.get('sympy_error', '')
+                                })
+                        
+                        pd.DataFrame(flattened_responses).to_csv(judge_file, index=False)
+                    elif response_format == 'xlsx':
+                        import pandas as pd
+                        # Similar flattening for Excel
+                        flattened_responses = []
+                        for resp in judge_responses:
+                            base_data = {k: v for k, v in resp.items() if not k.startswith('judge_response_')}
+                            
+                            if 'judge_response_1' in resp:
+                                jr1 = resp['judge_response_1']
+                                flattened_responses.append({
+                                    **base_data,
+                                    'judge_call': 1,
+                                    'judge_prompt': jr1.get('prompt', ''),
+                                    'judge_response': jr1.get('response', ''),
+                                    'judge_timestamp': jr1.get('timestamp', ''),
+                                    'judge_reason': jr1.get('reason', '')
+                                })
+                            
+                            if 'judge_response_2' in resp:
+                                jr2 = resp['judge_response_2']
+                                flattened_responses.append({
+                                    **base_data,
+                                    'judge_call': 2,
+                                    'judge_prompt': jr2.get('prompt', ''),
+                                    'judge_response': jr2.get('response', ''),
+                                    'judge_timestamp': jr2.get('timestamp', ''),
+                                    'judge_reason': jr2.get('reason', ''),
+                                    'sympy_result': jr2.get('sympy_result', ''),
+                                    'sympy_error': jr2.get('sympy_error', '')
+                                })
+                        
+                        pd.DataFrame(flattened_responses).to_excel(judge_file, index=False)
+                    
+                    # Log the save location
+                    print(f"Judge responses saved to: {judge_file}")
 
         score = PHYSIC_acc(storage)
         score_pth = storage.replace('.xlsx', '_score.csv')
