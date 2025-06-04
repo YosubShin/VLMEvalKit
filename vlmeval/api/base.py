@@ -38,6 +38,11 @@ class BaseAPI:
         self.fail_msg = fail_msg
         self.logger = get_logger('ChatAPI')
 
+        # Remove kwargs which should not be passed to the API
+        _ = kwargs.pop("save_judge_responses", None)
+        _ = kwargs.pop("save_detailed_eval", None)
+        _ = kwargs.pop("response_format", None)
+
         if len(kwargs):
             self.logger.info(f'BaseAPI received the following kwargs: {kwargs}')
             self.logger.info('Will try to use them as kwargs for `generate`. ')

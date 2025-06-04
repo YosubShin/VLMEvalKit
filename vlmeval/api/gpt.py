@@ -34,7 +34,7 @@ class OpenAIWrapper(BaseAPI):
     is_api: bool = True
 
     def __init__(self,
-                 model: str = 'gpt-3.5-turbo-0613',
+                 model: str = 'gpt-4.1-mini-2025-04-14',
                  retry: int = 5,
                  wait: int = 5,
                  key: str = None,
@@ -143,8 +143,6 @@ class OpenAIWrapper(BaseAPI):
                 self.logger.error('Unknown API Base. ')
                 raise NotImplementedError
 
-        self.logger.info(f'Using API Base: {self.api_base}; API Key: {self.key}')
-
     # inputs can be a lvl-2 nested list: [content1, content2, content3, ...]
     # content can be a string or a list of image & text
     def prepare_itlist(self, inputs):
@@ -206,13 +204,12 @@ class OpenAIWrapper(BaseAPI):
             payload.pop('temperature')
         else:
             payload['max_tokens'] = max_tokens
-
         response = requests.post(
             self.api_base,
             headers=headers, data=json.dumps(payload), timeout=self.timeout * 1.1)
         ret_code = response.status_code
         ret_code = 0 if (200 <= int(ret_code) < 300) else ret_code
-        answer = self.fail_msg
+        answer = self.fail_msg + "/nStatus code: " + str(ret_code)
         try:
             resp_struct = json.loads(response.text)
             answer = resp_struct['choices'][0]['message']['content'].strip()

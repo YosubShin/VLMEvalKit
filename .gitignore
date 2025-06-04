@@ -164,6 +164,7 @@ scripts/*ttf
 cache_dir/*
 
 # Evaluation Outputs
+wandb/*
 outputs/*
 demo.ipynb
 *json
