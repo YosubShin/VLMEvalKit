@@ -1326,6 +1326,8 @@ class VMCBenchDataset(ImageBaseDataset):
 
     def evaluate(self, eval_file, **judge_kwargs):
         from .utils.vmcbench import get_mc_score, report_vmc_acc
+        import pandas as pd
+        
         suffix = eval_file.split('.')[-1]
         data = load(eval_file)
         data = data.sort_values(by='index')

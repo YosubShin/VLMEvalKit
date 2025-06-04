@@ -580,8 +580,7 @@ class Physics_yale(ImageBaseDataset):
             capture_judge_responses = judge_kwargs.get('save_judge_responses', False)
             
             # Create wrapper function that includes the capture flag
-            def physics_eval_wrapper(args):
-                model, line = args
+            def physics_eval_wrapper(model, line):
                 return PHYSIC_auxeval(model, line, capture_judge_responses=capture_judge_responses)
             
             tups = [(model, line) for line in lines]
@@ -1036,6 +1035,8 @@ class OlympiadBench(ImageBaseDataset):
             correct_num = sum(correct_list)
             acc = 100 * correct_num / len(judge_file)
             acc_dict['AVG'] = [acc]
+
+            import pandas as pd
 
             acc_pd = pd.DataFrame(acc_dict)
             acc_pd.to_csv(score_file, index=False, encoding='gbk')
