@@ -2796,4 +2796,10 @@ class Omni3DBench(ImageBaseDataset):
 
         data = load(eval_file)
         result = Omni3DBench_acc(data)
+        
+        # Save score results to CSV file like other benchmarks
+        suffix = eval_file.split('.')[-1]
+        score_file = eval_file.replace(f'.{suffix}', '_acc.csv')
+        dump(result, score_file)
+        
         return result
