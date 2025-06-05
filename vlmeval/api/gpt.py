@@ -80,6 +80,12 @@ class OpenAIWrapper(BaseAPI):
             env_key = os.environ.get('XAI_API_KEY', '')
             if key is None:
                 key = env_key
+        elif 'gemini' in model and 'preview' in model:
+            # Will only handle preview models
+            env_key = os.environ.get('GOOGLE_API_KEY', '')
+            if key is None:
+                key = env_key
+            api_base = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         else:
             if use_azure:
                 env_key = os.environ.get('AZURE_OPENAI_API_KEY', None)
@@ -194,7 +200,6 @@ class OpenAIWrapper(BaseAPI):
         payload = dict(
             model=self.model,
             messages=input_msgs,
-            # max_tokens=max_tokens,
             n=1,
             temperature=temperature,
             **kwargs)
@@ -204,6 +209,15 @@ class OpenAIWrapper(BaseAPI):
             payload.pop('temperature')
         else:
             payload['max_tokens'] = max_tokens
+<<<<<<< HEAD
+=======
+
+        if 'gemini' in self.model:
+            payload.pop('max_tokens')
+            payload.pop('n')
+            payload['reasoning_effort'] = 'high'
+
+>>>>>>> 50b8ff5d6925d66efb05932245fd953915612bbc
         response = requests.post(
             self.api_base,
             headers=headers, data=json.dumps(payload), timeout=self.timeout * 1.1)
