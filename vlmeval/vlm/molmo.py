@@ -161,6 +161,8 @@ class molmo(BaseModel):
             prompt = self.build_prompt_mathvista(line)
         elif dataset in ['AI2D_TEST', 'AI2D_TEST_NO_MASK']:
             prompt = self.build_prompt_ai2d(line)
+        elif dataset in ["LiveXivTQA", "LiveXivVQA"]:
+            prompt = self.build_prompt_livexiv(line)
         elif dataset is not None and listinstr(list(DATASET_PROMPTS.keys()), dataset):
             prefix = DATASET_PROMPTS[dataset]  # rest of supervised datasets are in VQA format
             prompt = self.build_prompt_vqa(line, prefix)
@@ -274,7 +276,27 @@ class molmo(BaseModel):
             content = self._truncate_content(content, self.max_context_length)
         
         return content
-    
+    def build_prompt_livexiv(self, line, prefix=None):
+        question = line['question']
+        # hint = line['hint'] if ('hint' in line and not pd.isna(line['hint'])) else None
+        # if hint is not None:
+        #     question = hint + '\n' + question
+        options = {
+                cand: line[cand]
+                for cand in string.ascii_uppercase
+                if cand in line and not pd.isna(line[cand])
+                }
+            
+        for key, item in options.items():
+            question += f'\n{key}: {item}'
+                
+        if prefix is None:
+            prompt = f"{TYPE_PROMPTS['MCQ']} {question}\nAnswer with the option's letter from the given choices directly."
+        else:
+            prompt = f"{prefix} {question}"
+
+        return prompt
+
     def _estimate_token_count(self, text: str) -> int:
         """Estimate token count for text (rough approximation: 1 token ≈ 4 characters)."""
         return len(text) // 4

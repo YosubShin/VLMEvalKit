@@ -6,7 +6,7 @@ def get_score(model, dataset):
     file_name = f'{model}/{model}_{dataset}'
     if listinstr([
         'CCBench', 'MMBench', 'SEEDBench_IMG', 'MMMU', 'ScienceQA', 
-        'AI2D_TEST', 'MMStar', 'RealWorldQA', 'BLINK', 'VisOnlyQA-VLMEvalKit'
+        'AI2D_TEST', 'MMStar', 'RealWorldQA', 'BLINK', 'VisOnlyQA-VLMEvalKit', 'LiveXivTQA', 'LiveXivVQA',
     ], dataset):
         file_name += '_acc.csv'
     elif listinstr(['MME', 'Hallusion', 'LLaVABench'], dataset):

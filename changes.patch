@@ -1,0 +1,192 @@
+From fb1177efc19c007270e93de3f31c0e36d4449ce6 Mon Sep 17 00:00:00 2001
+From: Nimrod-Shabtay <Nimrod.Shabtay@ibm.com>
+Date: Wed, 4 Jun 2025 11:37:20 +0300
+Subject: [PATCH 1/3] init
+
+---
+ scripts/summarize.py         |  4 ++--
+ vlmeval/dataset/image_mcq.py |  3 +++
+ vlmeval/tools.py             |  2 +-
+ vlmeval/vlm/molmo.py         | 22 +++++++++++++++++++++-
+ 4 files changed, 27 insertions(+), 4 deletions(-)
+
+diff --git a/scripts/summarize.py b/scripts/summarize.py
+index f4e17c7..a6c5f2c 100644
+--- a/scripts/summarize.py
++++ b/scripts/summarize.py
+@@ -6,7 +6,7 @@ def get_score(model, dataset):
+     file_name = f'{model}/{model}_{dataset}'
+     if listinstr([
+         'CCBench', 'MMBench', 'SEEDBench_IMG', 'MMMU', 'ScienceQA', 
+-        'AI2D_TEST', 'MMStar', 'RealWorldQA', 'BLINK', 'VisOnlyQA-VLMEvalKit'
++        'AI2D_TEST', 'MMStar', 'RealWorldQA', 'BLINK', 'VisOnlyQA-VLMEvalKit', 'LiveXivTQA', 'LiveXivVQA',
+     ], dataset):
+         file_name += '_acc.csv'
+     elif listinstr(['MME', 'Hallusion', 'LLaVABench'], dataset):
+@@ -111,4 +111,4 @@ if __name__ == '__main__':
+     args = parse_args()
+     if args.data == []:
+         args.data = list(SUPPORTED_DATASETS)
+-    gen_table(args.model, args.data)
+\ No newline at end of file
++    gen_table(args.model, args.data)
+diff --git a/vlmeval/dataset/image_mcq.py b/vlmeval/dataset/image_mcq.py
+index 7735d09..2fc3f39 100644
+--- a/vlmeval/dataset/image_mcq.py
++++ b/vlmeval/dataset/image_mcq.py
+@@ -56,6 +56,9 @@ class ImageMCQDataset(ImageBaseDataset):
+         'MMBench_TEST_CN_V11': 'https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_TEST_CN_V11.tsv',
+         'MMBench_V11': 'https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_V11.tsv',  # Internal
+         'MMBench_CN_V11': 'https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_CN_V11.tsv',  # Internal
++        # LiveXiv
++        'LiveXivTQA': '/u/nimrodsh/LMUData/LiveXiv_TQA_v4.tsv',
++        'LiveXivVQA': '/u/nimrodsh/LMUData/LiveXiv_VQA_v4.tsv',
+         # SEEDBench Series
+         'SEEDBench_IMG': 'https://opencompass.openxlab.space/utils/benchmarks/SEEDBench/SEEDBench_IMG.tsv',
+         'SEEDBench2': 'https://huggingface.co/datasets/VLMEval/SEEDBench2/resolve/main/SEEDBench2.tsv',
+diff --git a/vlmeval/tools.py b/vlmeval/tools.py
+index 67f31af..feb8857 100644
+--- a/vlmeval/tools.py
++++ b/vlmeval/tools.py
+@@ -52,7 +52,7 @@ dataset_levels = {
+     'l2': [
+         ('MME', 'score.csv'), ('LLaVABench', 'score.csv'), ('RealWorldQA', 'acc.csv'),
+         ('MMBench', 'acc.csv'), ('MMBench_CN', 'acc.csv'), ('CCBench', 'acc.csv'),
+-        ('SEEDBench_IMG', 'acc.csv'), ('COCO_VAL', 'score.json'), ('POPE', 'score.csv'),
++        ('SEEDBench_IMG', 'acc.csv'), ('LiveXivTQA', 'acc.csv'), ('LiveXivVQA', 'acc.csv'), ('COCO_VAL', 'score.json'), ('POPE', 'score.csv'),
+         ('ScienceQA_VAL', 'acc.csv'), ('ScienceQA_TEST', 'acc.csv'), ('MMT-Bench_VAL', 'acc.csv'),
+         ('SEEDBench2_Plus', 'acc.csv'), ('BLINK', 'acc.csv'), ('MTVQA_TEST', 'acc.json'),
+         ('Q-Bench1_VAL', 'acc.csv'), ('A-Bench_VAL', 'acc.csv'), ('R-Bench-Dis', 'acc.csv'),
+diff --git a/vlmeval/vlm/molmo.py b/vlmeval/vlm/molmo.py
+index 3c69bb8..01a92ff 100644
+--- a/vlmeval/vlm/molmo.py
++++ b/vlmeval/vlm/molmo.py
+@@ -161,6 +161,8 @@ class molmo(BaseModel):
+             prompt = self.build_prompt_mathvista(line)
+         elif dataset in ['AI2D_TEST', 'AI2D_TEST_NO_MASK']:
+             prompt = self.build_prompt_ai2d(line)
++        elif dataset in ["LiveXivTQA", "LiveXivVQA"]:
++            prompt = self.build_prompt_livexiv(line)
+         elif dataset is not None and listinstr(list(DATASET_PROMPTS.keys()), dataset):
+             prefix = DATASET_PROMPTS[dataset]  # rest of supervised datasets are in VQA format
+             prompt = self.build_prompt_vqa(line, prefix)
+@@ -274,7 +276,25 @@ class molmo(BaseModel):
+             content = self._truncate_content(content, self.max_context_length)
+         
+         return content
+-    
++    def build_prompt_livexiv(self, line, prefix=None):
++        question = line['question']
++        hint = line['hint'] if ('hint' in line and not pd.isna(line['hint'])) else None
++        if hint is not None:
++            question = hint + '\n' + question
++            options = {
++                    cand: line[cand]
++                    for cand in string.ascii_uppercase
++                    if cand in line and not pd.isna(line[cand])
++                    }
++            for key, item in options.items():
++                question += f'\n{key}: {item}'
++                if prefix is None:
++                    prompt = f"{TYPE_PROMPTS['MCQ']} {question}\nAnswer with the option's letter from the given choices directly."
++                else:
++                    prompt = f"{prefix} {question}"
++
++            return prompt
++
+     def _estimate_token_count(self, text: str) -> int:
+         """Estimate token count for text (rough approximation: 1 token ≈ 4 characters)."""
+         return len(text) // 4
+-- 
+2.43.5
+
+
+From d90f45ee8bf54893f951c948d14d633a77b7b8bc Mon Sep 17 00:00:00 2001
+From: Nimrod-Shabtay <Nimrod.Shabtay@ibm.com>
+Date: Wed, 4 Jun 2025 14:42:51 +0300
+Subject: [PATCH 2/3] fix
+
+---
+ vlmeval/vlm/molmo.py | 33 ++++++++++++++++++---------------
+ 1 file changed, 18 insertions(+), 15 deletions(-)
+
+diff --git a/vlmeval/vlm/molmo.py b/vlmeval/vlm/molmo.py
+index 01a92ff..40d6fa5 100644
+--- a/vlmeval/vlm/molmo.py
++++ b/vlmeval/vlm/molmo.py
+@@ -171,6 +171,7 @@ class molmo(BaseModel):
+         else:
+             prompt = self.build_prompt_vqa(line)
+ 
++        print(f"prompt:\n {prompt}")
+         message = [dict(type='text', value=prompt)]
+         message.extend([dict(type='image', value=s) for s in tgt_path])
+ 
+@@ -278,22 +279,24 @@ class molmo(BaseModel):
+         return content
+     def build_prompt_livexiv(self, line, prefix=None):
+         question = line['question']
+-        hint = line['hint'] if ('hint' in line and not pd.isna(line['hint'])) else None
+-        if hint is not None:
+-            question = hint + '\n' + question
+-            options = {
+-                    cand: line[cand]
+-                    for cand in string.ascii_uppercase
+-                    if cand in line and not pd.isna(line[cand])
+-                    }
+-            for key, item in options.items():
+-                question += f'\n{key}: {item}'
+-                if prefix is None:
+-                    prompt = f"{TYPE_PROMPTS['MCQ']} {question}\nAnswer with the option's letter from the given choices directly."
+-                else:
+-                    prompt = f"{prefix} {question}"
++        # hint = line['hint'] if ('hint' in line and not pd.isna(line['hint'])) else None
++        # if hint is not None:
++        #     question = hint + '\n' + question
++        options = {
++                cand: line[cand]
++                for cand in string.ascii_uppercase
++                if cand in line and not pd.isna(line[cand])
++                }
++            
++        for key, item in options.items():
++            question += f'\n{key}: {item}'
++                
++        if prefix is None:
++            prompt = f"{TYPE_PROMPTS['MCQ']} {question}\nAnswer with the option's letter from the given choices directly."
++        else:
++            prompt = f"{prefix} {question}"
+ 
+-            return prompt
++        return prompt
+ 
+     def _estimate_token_count(self, text: str) -> int:
+         """Estimate token count for text (rough approximation: 1 token ≈ 4 characters)."""
+-- 
+2.43.5
+
+
+From 1ef942defdf18abe661b3485e1ddae0985bb3619 Mon Sep 17 00:00:00 2001
+From: Nimrod-Shabtay <Nimrod.Shabtay@ibm.com>
+Date: Wed, 4 Jun 2025 15:36:49 +0300
+Subject: [PATCH 3/3] .
+
+---
+ vlmeval/vlm/molmo.py | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/vlmeval/vlm/molmo.py b/vlmeval/vlm/molmo.py
+index 40d6fa5..fef49e0 100644
+--- a/vlmeval/vlm/molmo.py
++++ b/vlmeval/vlm/molmo.py
+@@ -171,7 +171,6 @@ class molmo(BaseModel):
+         else:
+             prompt = self.build_prompt_vqa(line)
+ 
+-        print(f"prompt:\n {prompt}")
+         message = [dict(type='text', value=prompt)]
+         message.extend([dict(type='image', value=s) for s in tgt_path])
+ 
+-- 
+2.43.5
+
