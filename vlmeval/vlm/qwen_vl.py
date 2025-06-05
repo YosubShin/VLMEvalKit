@@ -2,6 +2,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import warnings
 import copy as cp
+import string
+import pandas as pd
 from .base import BaseModel
 from ..smp import isimg, listinstr
 from ..dataset import DATASET_TYPE
@@ -34,6 +36,48 @@ class QwenVL(BaseModel):
         self.kwargs = default_kwargs
         warnings.warn(f'Following kwargs received: {self.kwargs}, will use as generation config. ')
         torch.cuda.empty_cache()
+
+    def use_custom_prompt(self, dataset):
+        """Use custom prompt for specific datasets including LiveXiv."""
+        if dataset in ["LiveXivTQA", "LiveXivVQA"]:
+            return True
+        return False
+
+    def build_prompt(self, line, dataset=None):
+        """Build custom prompts for specific datasets."""
+        assert self.use_custom_prompt(dataset)
+        assert dataset is None or isinstance(dataset, str)
+        tgt_path = self.dump_image(line, dataset)
+        
+        if dataset in ["LiveXivTQA", "LiveXivVQA"]:
+            prompt = self.build_prompt_livexiv(line)
+        else:
+            # Default to standard prompt building
+            prompt = line.get('question', '')
+        
+        message = [dict(type='text', value=prompt)]
+        message.extend([dict(type='image', value=s) for s in tgt_path])
+        
+        return message
+
+    def build_prompt_livexiv(self, line, prefix=None):
+        """Build prompt specifically for LiveXiv datasets."""
+        question = line['question']
+        options = {
+            cand: line[cand]
+            for cand in string.ascii_uppercase
+            if cand in line and not pd.isna(line[cand])
+        }
+        
+        for key, item in options.items():
+            question += f'\n{key}: {item}'
+        
+        if prefix is None:
+            prompt = f"{question}\nAnswer with the option's letter from the given choices directly."
+        else:
+            prompt = f"{prefix} {question}"
+
+        return prompt
 
     def adjust_kwargs(self, dataset):
         kwargs = cp.deepcopy(self.kwargs)
@@ -86,6 +130,48 @@ class QwenVLChat(BaseModel):
         torch.cuda.empty_cache()
         self.kwargs = kwargs
         warnings.warn(f'Following kwargs received: {self.kwargs}, will use as generation config. ')
+
+    def use_custom_prompt(self, dataset):
+        """Use custom prompt for specific datasets including LiveXiv."""
+        if dataset in ["LiveXivTQA", "LiveXivVQA"]:
+            return True
+        return False
+
+    def build_prompt(self, line, dataset=None):
+        """Build custom prompts for specific datasets."""
+        assert self.use_custom_prompt(dataset)
+        assert dataset is None or isinstance(dataset, str)
+        tgt_path = self.dump_image(line, dataset)
+        
+        if dataset in ["LiveXivTQA", "LiveXivVQA"]:
+            prompt = self.build_prompt_livexiv(line)
+        else:
+            # Default to standard prompt building
+            prompt = line.get('question', '')
+        
+        message = [dict(type='text', value=prompt)]
+        message.extend([dict(type='image', value=s) for s in tgt_path])
+        
+        return message
+
+    def build_prompt_livexiv(self, line, prefix=None):
+        """Build prompt specifically for LiveXiv datasets."""
+        question = line['question']
+        options = {
+            cand: line[cand]
+            for cand in string.ascii_uppercase
+            if cand in line and not pd.isna(line[cand])
+        }
+        
+        for key, item in options.items():
+            question += f'\n{key}: {item}'
+        
+        if prefix is None:
+            prompt = f"{question}\nAnswer with the option's letter from the given choices directly."
+        else:
+            prompt = f"{prefix} {question}"
+
+        return prompt
 
     def build_history(self, message):
 
