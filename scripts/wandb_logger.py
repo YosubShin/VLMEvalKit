@@ -307,9 +307,13 @@ def run_evaluation_and_log(
             if output == '' and process.poll() is not None:
                 break
             if output:
-                # Print to console immediately
-                print(output.strip())
-                output_lines.append(output.strip())
+                # Print to both stdout and stderr with explicit flushing for SLURM
+                output_line = output.strip()
+                print(output_line)
+                sys.stdout.flush()  # Force flush to SLURM log
+                print(output_line, file=sys.stderr)
+                sys.stderr.flush()  # Force flush to SLURM error log
+                output_lines.append(output_line)
         
         # Wait for process to complete
         return_code = process.poll()
