@@ -42,7 +42,7 @@ class molmo(BaseModel):
     INSTALL_REQ = False
     INTERLEAVE = False
 
-    def __init__(self, model_path='allenai/Molmo-7B-D-0924', **kwargs):
+    def __init__(self, model_path='oumi-ai/Molmo-7B-D-0924', **kwargs):
         try:
             from transformers import AutoModelForCausalLM, AutoProcessor, GenerationConfig
             import einops

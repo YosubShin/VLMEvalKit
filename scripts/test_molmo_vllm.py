@@ -20,7 +20,7 @@ def test_molmo_vllm():
     print("=" * 40)
     
     # Test configuration
-    model_path = "allenai/Molmo-7B-D-0924"  # Smallest Molmo model for testing
+    model_path = "oumi-ai/Molmo-7B-D-0924"  # Smallest Molmo model for testing
     
     print(f"1. Testing Transformers backend (use_vllm=False)")
     try:
@@ -198,7 +198,7 @@ def test_truncation_functionality():
     print("\\nTesting Truncation Functionality")
     print("=" * 40)
     
-    model_path = "allenai/Molmo-7B-D-0924"
+    model_path = "oumi-ai/Molmo-7B-D-0924"
     
     try:
         # Test with auto-truncation enabled

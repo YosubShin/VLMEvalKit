@@ -251,7 +251,7 @@ Custom Model Support:
         python run.py --model GPT4o --pass-custom-model microsoft/Phi-3-vision-128k-instruct --data MMBench_DEV_EN
         
         # Use custom model with VLLM acceleration
-        python run.py --pass-custom-model allenai/Molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 4
+        python run.py --pass-custom-model oumi-ai/Molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 4
 """
     parser = argparse.ArgumentParser(description=help_msg, formatter_class=argparse.RawTextHelpFormatter)
     # Essential Args, Setting the Names of Datasets and Models
