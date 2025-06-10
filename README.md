@@ -2,6 +2,8 @@
 
 <b>A Toolkit for Evaluating Large Vision-Language Models. </b>
 
+<b>DCVLR Edition </b>
+
 [![][github-contributors-shield]][github-contributors-link] • [![][github-forks-shield]][github-forks-link] • [![][github-stars-shield]][github-stars-link] • [![][github-issues-shield]][github-issues-link] • [![][github-license-shield]][github-license-link]
 
 English | [简体中文](/docs/zh-CN/README_zh-CN.md) | [日本語](/docs/ja/README_ja.md)
@@ -23,10 +25,23 @@ English | [简体中文](/docs/zh-CN/README_zh-CN.md) | [日本語](/docs/ja/REA
 
 **VLMEvalKit** (the python package name is **vlmeval**) is an **open-source evaluation toolkit** of **large vision-language models (LVLMs)**. It enables **one-command evaluation** of LVLMs on various benchmarks, without the heavy workload of data preparation under multiple repositories. In VLMEvalKit, we adopt **generation-based evaluation** for all LVLMs, and provide the evaluation results obtained with both **exact matching** and **LLM-based answer extraction**.
 
+This is the **Data Curation for Vision-Language Reasoning (DCVLR)** edition of VLMEvalKit, introduced by [Oumi AI](github.com/oumi-ai) in support of the [2025 DCVLR Competition](https://dcvlr-neurips.github.io/dcvlr-neurips/). This edition includes several new datasets, refines support for the Molmo series of models, and adds useful features (see 🔥 Enhanced Features).
+
+Modifications by @penfever, @oelachqar, @NimrodShabtay and @rohunagrawal.
+
+## 🚀 Key Features
+
+- **🤖 Custom Model Support**: Automatically detect and evaluate models from HuggingFace repositories with `--pass-custom-model`
+- **⚡ VLLM Acceleration**: High-performance inference with batch processing for supported models
+- **📊 Advanced Logging**: Comprehensive evaluation tracking with WandB integration
+- **💾 Detailed Response Saving**: Save raw model responses and LLM judge explanations
+- **🔧 Token Control**: Global and model-specific output token limits
+- **🎯 One-Command Evaluation**: Minimal setup for comprehensive benchmarking
+
 ## 🆕 News
 
 > We have presented a [**comprehensive survey**](https://arxiv.org/pdf/2411.15296) on the evaluation of large multi-modality models, jointly with [**MME Team**](https://github.com/BradyFU/Awesome-Multimodal-Large-Language-Models) and [**LMMs-Lab**](https://lmms-lab.github.io) 🔥🔥🔥
-- **[2025-05-24]** To facilitate faster evaluations for large-scale or thinking models, **VLMEvalKit supports multi-node distributed inference** using **LMDeploy**  (supports *InternVL Series, QwenVL Series, LLaMa4*) or **VLLM**(supports *QwenVL Series, LLaMa4*). You can activate this feature by adding the ```use_lmdeploy``` or ```use_vllm``` flag to your custom model configuration in [config.py](vlmeval/config.py) . Leverage these tools to significantly speed up your evaluation workflows 🔥🔥🔥
+- **[2025-05-24]** To facilitate faster evaluations for large-scale or thinking models, **VLMEvalKit supports multi-node distributed inference** using **LMDeploy**  (supports *InternVL Series, QwenVL Series, LLaMa4*) or **VLLM**(supports *QwenVL Series, Qwen2.5-VL Series, LLaMa4, Molmo, Gemma3*). You can activate this feature by adding the ```use_lmdeploy``` or ```use_vllm``` flag to your custom model configuration in [config.py](vlmeval/config.py) or use ```--use-vllm --batch-size N``` for automatic batch processing. Custom models from HuggingFace repositories are automatically detected for VLLM compatibility. Leverage these tools to significantly speed up your evaluation workflows 🔥🔥🔥
 - **[2025-05-24]** Supported Models: **InternVL3 Series, Gemini-2.5-Pro, Kimi-VL, LLaMA4, NVILA, Qwen2.5-Omni, Phi4, SmolVLM2, Grok, SAIL-VL-1.5, WeThink-Qwen2.5VL-7B, Bailingmm, VLM-R1, Taichu-VLR**. Supported Benchmarks: **HLE-Bench, MMVP, MM-AlignBench, Creation-MMBench, MM-IFEval, OmniDocBench, OCR-Reasoning, EMMA, ChaXiv，MedXpertQA, Physics, MSEarthMCQ, MicroBench, MMSci, VGRP-Bench, wildDoc, TDBench, VisuLogic, CVBench, LEGO-Puzzles, Video-MMLU, QBench-Video, MME-CoT, VLM2Bench, VMCBench, MOAT, Spatial457 Benchmark**. Please refer to [**VLMEvalKit Features**](https://aicarrier.feishu.cn/wiki/Qp7wwSzQ9iK1Y6kNUJVcr6zTnPe?table=tblsdEpLieDoCxtb) for more details. Thanks to all contributors 🔥🔥🔥
 - **[2025-02-20]** Supported Models: **InternVL2.5 Series, Qwen2.5VL Series, QVQ-72B, Doubao-VL, Janus-Pro-7B, MiniCPM-o-2.6, InternVL2-MPO, LLaVA-CoT, Hunyuan-Standard-Vision, Ovis2, Valley, SAIL-VL, Ross, Long-VITA, EMU3, SmolVLM**. Supported Benchmarks: **MMMU-Pro, WeMath, 3DSRBench, LogicVista, VL-RewardBench, CC-OCR, CG-Bench, CMMMU, WorldSense**. Thanks to all contributors 🔥🔥🔥
 - **[2024-12-11]** Supported [**NaturalBench**](https://huggingface.co/datasets/BaiqiL/NaturalBench), a vision-centric VQA benchmark (NeurIPS'24) that challenges vision-language models with simple questions about natural imagery.
@@ -43,6 +58,211 @@ English | [简体中文](/docs/zh-CN/README_zh-CN.md) | [日本語](/docs/ja/REA
 ## 🏗️ QuickStart
 
 See [[QuickStart](/docs/en/Quickstart.md) | [快速开始](/docs/zh-CN/Quickstart.md)] for a quick start guide.
+
+## 🔥 Enhanced Features
+
+### 🤖 Custom Model Support
+
+Automatically detect and evaluate any HuggingFace model without manual configuration:
+
+```bash
+# Evaluate a custom Qwen2.5-VL model
+python run.py --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN
+
+# Evaluate a custom LLaVA model with multiple datasets
+python run.py --pass-custom-model liuhaotian/llava-v1.5-7b --data MMBench_DEV_EN MMMU_DEV_VAL
+
+# Combine custom model with existing models
+python run.py --model GPT4o --pass-custom-model microsoft/Phi-3-vision-128k-instruct --data MMBench_DEV_EN
+
+# Use custom model with VLLM acceleration
+python run.py --pass-custom-model oumi-ai/Molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 4
+```
+
+**Supported Architectures**: Automatically detects 25+ model families including Qwen2-VL, Qwen2.5-VL, LLaVA, InternVL, MiniCPM, Phi, Molmo, Aria, Pixtral, SmolVLM, IDEFICS, CogVLM, DeepSeek, Llama-Vision, Gemma, VILA, Ovis, Bunny, Cambrian, Mantis, Moondream, and more.
+
+### ⚡ VLLM Acceleration & Batch Processing
+
+High-performance inference with 2-4x speedup for supported models:
+
+```bash
+# Enable VLLM with batch processing
+python run.py --model molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 4
+
+# Custom models with VLLM (auto-detected compatibility)
+python run.py --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN --use-vllm --batch-size 8
+
+# Memory-constrained environments
+python run.py --model molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 2 --verbose
+```
+
+**VLLM-Compatible Models**: 
+- **Qwen2-VL & Qwen2.5-VL**: All variants automatically detected
+- **Molmo**: All sizes with full batch processing support
+- **Llama-4**: Scout and other variants
+- **Gemma3**: Selected configurations
+- **Custom Models**: Automatic compatibility detection
+
+**Performance**: Up to 3.2x speedup with batch size 8 on large datasets (see [VLLM_BATCH_PROCESSING.md](/docs/VLLM_BATCH_PROCESSING.md)).
+
+### 📊 WandB Experiment Tracking
+
+Comprehensive experiment tracking and visualization with Weights & Biases:
+
+```bash
+# Log evaluation results to WandB
+python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN
+
+# Batch evaluation with WandB logging
+python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --data MMBench_DEV_EN MMMU_DEV_VAL --use-vllm --batch-size 4
+
+# Custom model evaluation with WandB
+python scripts/wandb_logger.py --run-and-log --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN
+
+# Log existing results
+python scripts/wandb_logger.py --model GPT4o --data MMBench_DEV_EN --work-dir ./outputs
+
+# Bulk upload all results
+python scripts/wandb_logger.py --log-all --work-dir ./outputs
+```
+
+**Features**:
+- Automatic metric extraction from result files
+- Model configuration tracking
+- Dataset statistics and analysis
+- Performance monitoring for batch processing
+- Experiment comparison and visualization
+
+### 💾 Advanced Response Saving
+
+Save detailed evaluation data for analysis and debugging:
+
+```bash
+# Save raw model responses
+python run.py --model GPT4o --data quantum_dataset --save-detailed-eval
+
+# Save LLM judge responses (for supported datasets)
+python run.py --model GPT4o --data mechanics_dataset --save-judge-responses
+
+# Save both with custom format
+python run.py --model GPT4o --data atomic_dataset --save-detailed-eval --save-judge-responses --response-format xlsx
+
+# Supported formats: json (default), csv, xlsx
+python run.py --model GPT4o --data OlympiadBench --save-detailed-eval --response-format csv
+```
+
+**Supported Datasets**:
+- **Judge Responses**: Yale_physics datasets (quantum_dataset, mechanics_dataset, atomic_dataset, electro_dataset, optics_dataset, statistics_dataset)
+- **Detailed Evaluation**: Yale_physics, OlympiadBench, VMCBench_DEV
+
+### 🔧 Token Control
+
+Fine-grained control over model output length:
+
+```bash
+# Global token override (supersedes all other limits)
+python run.py --model GPT4o --data MMBench_DEV_EN --max-output-tokens 2048
+
+# With custom models
+python run.py --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN --max-output-tokens 1024
+
+# Combined with other features
+python run.py --pass-custom-model oumi-ai/Molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 4 --max-output-tokens 512
+```
+
+**Benefits**:
+- Consistent output lengths across models
+- Cost control for API models
+- Memory optimization for large-scale evaluation
+- Standardized comparison conditions
+
+### 🎯 Complete Workflow Examples
+
+```bash
+# Complete custom model evaluation with all features
+python scripts/wandb_logger.py --run-and-log \
+  --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct \
+  --data MMBench_DEV_EN MMMU_DEV_VAL \
+  --use-vllm --batch-size 4 \
+  --max-output-tokens 1024 \
+  --save-detailed-eval \
+  --response-format json \
+  --verbose
+
+# Research workflow: evaluate multiple custom models
+for model in "Qwen/Qwen2.5-VL-7B-Instruct" "microsoft/Phi-3-vision-128k-instruct" "oumi-ai/Molmo-7B-D-0924"; do
+  python scripts/wandb_logger.py --run-and-log \
+    --pass-custom-model "$model" \
+    --data MMBench_DEV_EN \
+    --use-vllm --batch-size 4 \
+    --max-output-tokens 1024
+done
+
+# Production evaluation with comprehensive logging
+python scripts/wandb_logger.py --run-and-log \
+  --model GPT4o \
+  --data quantum_dataset mechanics_dataset atomic_dataset \
+  --save-judge-responses \
+  --save-detailed-eval \
+  --response-format xlsx \
+  --max-output-tokens 2048
+```
+
+## 🛠️ Command-Line Parameters
+
+### New Parameters
+
+| Parameter | Description | Example | 
+|-----------|-------------|---------|
+| `--pass-custom-model` | HuggingFace repository for automatic model detection | `--pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct` |
+| `--max-output-tokens` | Global override for maximum output tokens | `--max-output-tokens 2048` |
+| `--save-detailed-eval` | Save comprehensive evaluation data | `--save-detailed-eval` |
+| `--save-judge-responses` | Save raw LLM judge responses | `--save-judge-responses` |
+| `--response-format` | Format for detailed responses | `--response-format xlsx` |
+| `--use-vllm` | Enable VLLM backend for acceleration | `--use-vllm` |
+| `--batch-size` | Batch size for VLLM inference | `--batch-size 4` |
+
+### WandB Logger Script
+
+The `scripts/wandb_logger.py` provides comprehensive experiment tracking with all the same parameters as `run.py` plus additional WandB-specific options:
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `--run-and-log` | Run evaluation and log to WandB | `--run-and-log` |
+| `--log-all` | Log all existing results in work directory | `--log-all` |
+| `--project` | WandB project name | `--project my-vlm-experiments` |
+| `--tags` | Additional tags for WandB run | `--tags baseline experiment-1` |
+| `--notes` | Notes for WandB run | `--notes "Testing new model"` |
+
+### Usage Examples
+
+```bash
+# Complete evaluation with all new features
+python run.py \
+  --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct \
+  --data MMBench_DEV_EN MMMU_DEV_VAL \
+  --use-vllm --batch-size 4 \
+  --max-output-tokens 1024 \
+  --save-detailed-eval \
+  --save-judge-responses \
+  --response-format json \
+  --verbose
+
+# WandB logging with custom model
+python scripts/wandb_logger.py \
+  --run-and-log \
+  --pass-custom-model microsoft/Phi-3-vision-128k-instruct \
+  --data MMBench_DEV_EN \
+  --project my-vlm-research \
+  --tags phi3-vision baseline \
+  --max-output-tokens 2048
+
+# Batch upload existing results to WandB
+python scripts/wandb_logger.py \
+  --log-all \
+  --work-dir ./outputs \
+  --project vlm-benchmark-results
+```
 
 ## 📊 Datasets, Models, and Evaluation Results
 

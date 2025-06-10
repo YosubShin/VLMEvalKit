@@ -57,6 +57,97 @@ pip install -e .
 
 **新功能!!!** 我们集成了一个新的配置系统，以实现更灵活的评估设置。查看[文档](/docs/zh-CN/ConfigSystem.md)或运行`python run.py --help`了解更多详情 🔥🔥🔥
 
+### 🔥 增强功能（DCVLR 版本）
+
+#### 🤖 自定义模型支持
+
+使用 `--pass-custom-model` 评估任何 HuggingFace 模型，无需手动配置：
+
+```bash
+# 评估自定义 Qwen2.5-VL 模型
+python run.py --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN
+
+# 与现有模型结合使用
+python run.py --model GPT4o --pass-custom-model microsoft/Phi-3-vision-128k-instruct --data MMBench_DEV_EN
+
+# 多数据集自定义模型评估
+python run.py --pass-custom-model liuhaotian/llava-v1.5-7b --data MMBench_DEV_EN MMMU_DEV_VAL
+```
+
+**支持的架构**：自动检测 25+ 种模型家族，包括 Qwen2-VL、Qwen2.5-VL、LLaVA、InternVL、MiniCPM、Phi、Molmo、Aria、Pixtral、SmolVLM、IDEFICS、CogVLM、DeepSeek、Llama-Vision、Gemma 等。
+
+#### ⚡ VLLM 加速与批处理
+
+启用高性能推理，可获得 2-4 倍加速：
+
+```bash
+# 启用 VLLM 批处理（自动检测兼容性）
+python run.py --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN --use-vllm --batch-size 4
+
+# 与预配置模型一起使用
+python run.py --model molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 8
+
+# 内存受限环境
+python run.py --model molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 2 --verbose
+```
+
+**VLLM 兼容模型**：Qwen2-VL 和 Qwen2.5-VL（所有变体）、Molmo（所有尺寸）、Llama-4、Gemma3，以及具有自动兼容性检测的自定义模型。
+
+#### 🔧 令牌控制
+
+全局控制所有模型的输出长度：
+
+```bash
+# 全局令牌覆盖（优先于所有模型/数据集默认值）
+python run.py --model GPT4o --data MMBench_DEV_EN --max-output-tokens 2048
+
+# 与自定义模型一起使用
+python run.py --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN --max-output-tokens 1024
+```
+
+#### 💾 高级响应保存
+
+保存详细的评估数据用于分析：
+
+```bash
+# 保存原始模型响应（支持 Yale_physics、OlympiadBench、VMCBench_DEV）
+python run.py --model GPT4o --data quantum_dataset --save-detailed-eval
+
+# 保存 LLM 评判响应（支持 Yale_physics 数据集）
+python run.py --model GPT4o --data mechanics_dataset --save-judge-responses
+
+# 多种格式和选项
+python run.py --model GPT4o --data atomic_dataset --save-detailed-eval --save-judge-responses --response-format xlsx
+```
+
+**支持的格式**：`json`（默认）、`csv`、`xlsx`
+
+#### 📊 WandB 实验跟踪
+
+使用 `scripts/wandb_logger.py` 进行全面的实验记录：
+
+```bash
+# 运行评估并记录到 WandB
+python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN
+
+# 自定义模型评估与 WandB
+python scripts/wandb_logger.py --run-and-log --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN
+
+# 记录现有结果
+python scripts/wandb_logger.py --log-all --work-dir ./outputs
+
+# 包含所有功能的完整工作流程
+python scripts/wandb_logger.py --run-and-log \
+  --pass-custom-model oumi-ai/Molmo-7B-D-0924 \
+  --data MMBench_DEV_EN MMMU_DEV_VAL \
+  --use-vllm --batch-size 4 \
+  --max-output-tokens 1024 \
+  --save-detailed-eval \
+  --project my-vlm-research
+```
+
+**WandB 功能**：自动指标提取、模型配置跟踪、性能监控、实验比较。
+
 我们使用 `run.py` 进行评估。你可以使用 `$VLMEvalKit/run.py` 或创建脚本的软链接运行（以便在任何地方使用该脚本）：
 
 **参数**

@@ -58,15 +58,116 @@ To infer with API models (GPT-4v, Gemini-Pro-V, etc.) or use LLM APIs as the **j
 
 **New!!!**  We integrated a new config system to enable more flexible evaluation settings. Check the [Document](/docs/en/ConfigSystem.md) or run `python run.py --help` for more details 🔥🔥🔥
 
+### 🔥 Enhanced Features (DCVLR Edition)
+
+#### 🤖 Custom Model Support
+
+Evaluate any HuggingFace model without manual configuration using `--pass-custom-model`:
+
+```bash
+# Evaluate a custom Qwen2.5-VL model
+python run.py --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN
+
+# Combine with existing models
+python run.py --model GPT4o --pass-custom-model microsoft/Phi-3-vision-128k-instruct --data MMBench_DEV_EN
+
+# Multiple datasets with custom model
+python run.py --pass-custom-model liuhaotian/llava-v1.5-7b --data MMBench_DEV_EN MMMU_DEV_VAL
+```
+
+**Supported Architectures**: Automatically detects 25+ model families including Qwen2-VL, Qwen2.5-VL, LLaVA, InternVL, MiniCPM, Phi, Molmo, Aria, Pixtral, SmolVLM, IDEFICS, CogVLM, DeepSeek, Llama-Vision, Gemma, and more.
+
+#### ⚡ VLLM Acceleration & Batch Processing
+
+Enable high-performance inference with 2-4x speedup:
+
+```bash
+# Enable VLLM with batch processing (auto-detects compatibility)
+python run.py --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN --use-vllm --batch-size 4
+
+# Use with pre-configured models
+python run.py --model molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 8
+
+# Memory-constrained environments
+python run.py --model molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 2 --verbose
+```
+
+**VLLM-Compatible Models**: Qwen2-VL & Qwen2.5-VL (all variants), Molmo (all sizes), Llama-4, Gemma3, and custom models with automatic compatibility detection.
+
+#### 🔧 Token Control
+
+Control output length globally across all models:
+
+```bash
+# Global token override (supersedes all model/dataset defaults)
+python run.py --model GPT4o --data MMBench_DEV_EN --max-output-tokens 2048
+
+# With custom models
+python run.py --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN --max-output-tokens 1024
+```
+
+#### 💾 Advanced Response Saving
+
+Save detailed evaluation data for analysis:
+
+```bash
+# Save raw model responses (supports Yale_physics, OlympiadBench, VMCBench_DEV)
+python run.py --model GPT4o --data quantum_dataset --save-detailed-eval
+
+# Save LLM judge responses (supports Yale_physics datasets)
+python run.py --model GPT4o --data mechanics_dataset --save-judge-responses
+
+# Multiple formats and options
+python run.py --model GPT4o --data atomic_dataset --save-detailed-eval --save-judge-responses --response-format xlsx
+```
+
+**Supported Formats**: `json` (default), `csv`, `xlsx`
+
+#### 📊 WandB Experiment Tracking
+
+Comprehensive experiment logging with `scripts/wandb_logger.py`:
+
+```bash
+# Run evaluation and log to WandB
+python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN
+
+# Custom model evaluation with WandB
+python scripts/wandb_logger.py --run-and-log --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV_EN
+
+# Log existing results
+python scripts/wandb_logger.py --log-all --work-dir ./outputs
+
+# Complete workflow with all features
+python scripts/wandb_logger.py --run-and-log \
+  --pass-custom-model oumi-ai/Molmo-7B-D-0924 \
+  --data MMBench_DEV_EN MMMU_DEV_VAL \
+  --use-vllm --batch-size 4 \
+  --max-output-tokens 1024 \
+  --save-detailed-eval \
+  --project my-vlm-research
+```
+
+**WandB Features**: Automatic metric extraction, model configuration tracking, performance monitoring, experiment comparison.
+
 We use `run.py` for evaluation. To use the script, you can use `$VLMEvalKit/run.py` or create a soft-link of the script (to use the script anywhere):
 
 **Arguments**
 
+**Core Arguments:**
 - `--data (list[str])`: Set the dataset names that are supported in VLMEvalKit (names can be found in the codebase README).
 - `--model (list[str])`: Set the VLM names that are supported in VLMEvalKit (defined in `supported_VLM` in `vlmeval/config.py`).
 - `--mode (str, default to 'all', choices are ['all', 'infer'])`: When `mode` set to "all", will perform both inference and evaluation; when set to "infer", will only perform the inference.
 - `--api-nproc (int, default to 4)`: The number of threads for OpenAI API calling.
 - `--work-dir (str, default to '.')`: The directory to save evaluation results.
+
+**New Enhanced Arguments:**
+- `--pass-custom-model (str)`: HuggingFace repository path for automatic model detection and evaluation.
+- `--max-output-tokens (int)`: Global override for maximum output tokens across all models and datasets.
+- `--use-vllm`: Enable VLLM backend for high-performance inference.
+- `--batch-size (int)`: Batch size for VLLM inference (requires `--use-vllm`).
+- `--save-detailed-eval`: Save comprehensive evaluation data including raw model responses.
+- `--save-judge-responses`: Save raw LLM judge responses with explanations.
+- `--response-format (str)`: Format for detailed responses (choices: json, csv, xlsx).
 
 **Command for Evaluating Image Benchmarks **
 
