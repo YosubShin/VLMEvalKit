@@ -72,7 +72,9 @@ def detect_model_architecture(model_path: str) -> Tuple[str, Dict[str, Any]]:
     arch_lower = [arch.lower() for arch in architectures]
     
     # Model detection logic based on config
-    if any("qwen2_vl" in arch for arch in arch_lower) or model_type == "qwen2_vl":
+    if (any("qwen2_vl" in arch or "qwen2_5_vl" in arch for arch in arch_lower) or 
+        model_type == "qwen2_vl" or model_type == "qwen2_5_vl"):
+        # Handle both Qwen2-VL and Qwen2.5-VL models
         return "Qwen2VLChat", {
             "model_path": model_path,
             "min_pixels": 1280 * 28 * 28,
