@@ -227,12 +227,60 @@ def detect_model_architecture(model_path: str) -> Tuple[str, Dict[str, Any]]:
         else:
             return "Moondream1", {"model_path": model_path}
     
+    elif "eagle" in model_name_lower:
+        return "Eagle", {"model_path": model_path}
+    
+    elif "vita" in model_name_lower:
+        if "long" in model_name_lower:
+            return "LongVITA", {"model_path": model_path}
+        elif "qwen2" in model_name_lower:
+            return "VITAQwen2", {"model_path": model_path}
+        else:
+            return "VITA", {"model_path": model_path}
+    
+    elif "sail" in model_name_lower:
+        return "SailVL", {"model_path": model_path}
+    
+    elif "flash" in model_name_lower and "vl" in model_name_lower:
+        return "FlashVL", {"model_path": model_path}
+    
+    elif "kimi" in model_name_lower:
+        return "KimiVL", {"model_path": model_path}
+    
+    elif "nvlm" in model_name_lower:
+        return "NVLM", {"model_path": model_path}
+    
+    elif "vintern" in model_name_lower:
+        return "VinternChat", {"model_path": model_path}
+    
+    elif "h2ovl" in model_name_lower:
+        return "H2OVLChat", {"model_path": model_path}
+    
+    elif "points" in model_name_lower:
+        if "v15" in model_name_lower or "v1.5" in model_name_lower:
+            return "POINTSV15", {"model_path": model_path}
+        else:
+            return "POINTS", {"model_path": model_path}
+    
+    elif "kosmos" in model_name_lower:
+        return "Kosmos2", {"model_path": model_path}
+    
+    elif "emu" in model_name_lower:
+        if "emu3" in model_name_lower:
+            if "gen" in model_name_lower:
+                return "Emu3_gen", {"model_path": model_path}
+            else:
+                return "Emu3_chat", {"model_path": model_path}
+        else:
+            return "Emu", {"model_path": model_path}
+    
     # If no match found, raise an error with helpful information
     supported_types = [
-        "qwen2_vl", "qwen_vl", "llava", "internvl", "minicpm", "phi", 
+        "qwen2_vl", "qwen2_5_vl", "qwen_vl", "llava", "internvl", "minicpm", "phi", 
         "molmo", "aria", "pixtral", "smolvlm", "idefics", "cogvlm", 
         "deepseek", "llama-vision", "gemma", "vila", "ovis", "bunny",
-        "cambrian", "mantis", "moondream"
+        "cambrian", "mantis", "moondream", "eagle", "vita", "sail", "flash",
+        "kimi", "nvlm", "vintern", "h2ovl", "points", "kosmos", "emu"
     ]
     
     raise ValueError(

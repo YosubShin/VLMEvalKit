@@ -501,12 +501,12 @@ def main():
             
         # Determine model name for WandB logging and run.py
         # If both model and custom model are specified, pass the regular model name to run.py
-        # If only custom model is specified, use a placeholder for WandB but let run.py handle the model
+        # If only custom model is specified, use the registered model name
         if args.model:
             wandb_model_name = args.model
         elif args.pass_custom_model:
-            # Extract a reasonable name from the custom model path for WandB logging
-            wandb_model_name = args.pass_custom_model.split('/')[-1]
+            # Use the same name transformation as the model detection system
+            wandb_model_name = args.pass_custom_model.replace('/', '_') if '/' in args.pass_custom_model else args.pass_custom_model
         else:
             wandb_model_name = None
         
