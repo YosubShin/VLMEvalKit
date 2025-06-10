@@ -327,6 +327,36 @@ def create_custom_model_entry(model_path: str, model_name: Optional[str] = None)
         raise ImportError(f"Failed to import model class {detected_class}: {e}")
 
 
+def is_vllm_compatible(detected_class: str, model_path: str) -> bool:
+    """
+    Determine if a model class/path combination is VLLM compatible.
+    
+    Args:
+        detected_class: The detected model class name
+        model_path: The model path or repository name
+        
+    Returns:
+        True if the model is VLLM compatible
+    """
+    # Check based on model class
+    vllm_compatible_classes = {
+        "Qwen2VLChat",  # Qwen2-VL and Qwen2.5-VL models
+        "llama4",       # Llama-4 models
+        "molmo",        # Molmo models
+        "Gemma3",       # Gemma models (in some configurations)
+    }
+    
+    if detected_class in vllm_compatible_classes:
+        return True
+    
+    # Additional path-based checks for edge cases
+    model_path_lower = model_path.lower()
+    if any(pattern in model_path_lower for pattern in ["qwen2-vl", "qwen2.5-vl", "llama-4", "molmo"]):
+        return True
+    
+    return False
+
+
 def register_custom_model(model_path: str, model_name: Optional[str] = None) -> str:
     """
     Register a custom model with VLMEvalKit's supported_VLM dictionary.
@@ -344,5 +374,13 @@ def register_custom_model(model_path: str, model_name: Optional[str] = None) -> 
     
     # Add to supported_VLM dictionary
     supported_VLM[registered_name] = model_partial
+    
+    # Store VLLM compatibility information for later use
+    detected_class, _ = detect_model_architecture(model_path)
+    if is_vllm_compatible(detected_class, model_path):
+        # Add a marker to track VLLM compatibility
+        if not hasattr(supported_VLM, '_vllm_compatible_models'):
+            supported_VLM._vllm_compatible_models = set()
+        supported_VLM._vllm_compatible_models.add(registered_name)
     
     return registered_name
