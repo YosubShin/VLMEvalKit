@@ -110,17 +110,18 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
 
     kwargs = {}
     if model_name is not None:
-        # Check traditional hardcoded patterns
-        is_vllm_compatible = (
-            'Llama-4' in model_name
-            or 'Qwen2-VL' in model_name
-            or 'Qwen2.5-VL' in model_name
-            or 'molmo' in model_name.lower()
-        )
-        
-        # Also check if this is a custom registered model with VLLM compatibility
-        if not is_vllm_compatible and hasattr(supported_VLM, '_vllm_compatible_models'):
-            is_vllm_compatible = model_name in supported_VLM._vllm_compatible_models
+        # Check VLLM compatibility using the model detection utility
+        try:
+            from vlmeval.utils.model_detection import is_model_vllm_compatible
+            is_vllm_compatible = is_model_vllm_compatible(model_name)
+        except ImportError:
+            # Fallback to original hardcoded patterns if import fails
+            is_vllm_compatible = (
+                'Llama-4' in model_name
+                or 'Qwen2-VL' in model_name
+                or 'Qwen2.5-VL' in model_name
+                or 'molmo' in model_name.lower()
+            )
         
         if is_vllm_compatible:
             kwargs = {'use_vllm': use_vllm}

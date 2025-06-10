@@ -357,6 +357,10 @@ def is_vllm_compatible(detected_class: str, model_path: str) -> bool:
     return False
 
 
+# Global set to track VLLM-compatible custom models
+_vllm_compatible_models = set()
+
+
 def register_custom_model(model_path: str, model_name: Optional[str] = None) -> str:
     """
     Register a custom model with VLMEvalKit's supported_VLM dictionary.
@@ -378,9 +382,31 @@ def register_custom_model(model_path: str, model_name: Optional[str] = None) -> 
     # Store VLLM compatibility information for later use
     detected_class, _ = detect_model_architecture(model_path)
     if is_vllm_compatible(detected_class, model_path):
-        # Add a marker to track VLLM compatibility
-        if not hasattr(supported_VLM, '_vllm_compatible_models'):
-            supported_VLM._vllm_compatible_models = set()
-        supported_VLM._vllm_compatible_models.add(registered_name)
+        # Add to global VLLM compatibility tracker
+        _vllm_compatible_models.add(registered_name)
     
     return registered_name
+
+
+def is_model_vllm_compatible(model_name: str) -> bool:
+    """
+    Check if a model (including custom registered models) is VLLM compatible.
+    
+    Args:
+        model_name: The model name to check
+        
+    Returns:
+        True if the model is VLLM compatible
+    """
+    # Check traditional hardcoded patterns
+    is_vllm_compatible_traditional = (
+        'Llama-4' in model_name
+        or 'Qwen2-VL' in model_name
+        or 'Qwen2.5-VL' in model_name
+        or 'molmo' in model_name.lower()
+    )
+    
+    # Also check if this is a custom registered model with VLLM compatibility
+    is_custom_vllm_compatible = model_name in _vllm_compatible_models
+    
+    return is_vllm_compatible_traditional or is_custom_vllm_compatible
