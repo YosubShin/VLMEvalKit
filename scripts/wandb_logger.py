@@ -33,6 +33,12 @@ Usage:
 
     # Run with custom max output tokens override
     python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN --max-output-tokens 2048
+
+    # Run with custom model detection
+    python scripts/wandb_logger.py --run-and-log --pass-custom-model Qwen/Qwen2-VL-7B-Instruct --data MMBench_DEV_EN
+
+    # Combine custom model with existing models  
+    python scripts/wandb_logger.py --run-and-log --model GPT4o --pass-custom-model microsoft/Phi-3-vision-128k-instruct --data MMBench_DEV_EN
 """
 
 import argparse
@@ -239,6 +245,7 @@ def run_evaluation_and_log(
     save_detailed_eval: bool = False,
     response_format: str = 'json',
     max_output_tokens: Optional[int] = None,
+    pass_custom_model: Optional[str] = None,
     additional_args: List[str] = None
 ) -> List[str]:
     """Run VLMEvalKit evaluation and log results to WandB."""
@@ -255,13 +262,14 @@ def run_evaluation_and_log(
         logger.info("Using transformers backend")
     
     # Prepare run command
-    cmd = [
-        sys.executable, "run.py",
-        "--model", model_name,
-        "--data"
-    ]
+    cmd = [sys.executable, "run.py"]
     
-    # Add all dataset names to the command
+    # Add model if specified (can be used together with custom model)
+    if model_name:
+        cmd.extend(["--model", model_name])
+    
+    # Add datasets
+    cmd.extend(["--data"])
     cmd.extend(dataset_names)
     
     # Add work directory
@@ -290,6 +298,10 @@ def run_evaluation_and_log(
     # Add max output tokens override
     if max_output_tokens is not None:
         cmd.extend(["--max-output-tokens", str(max_output_tokens)])
+    
+    # Add custom model support
+    if pass_custom_model is not None:
+        cmd.extend(["--pass-custom-model", pass_custom_model])
     
     if additional_args:
         cmd.extend(additional_args)
@@ -442,6 +454,13 @@ def main():
         help="Global override for maximum output tokens. Supersedes all model-specific and dataset-specific token limits."
     )
     
+    # Custom model support
+    parser.add_argument(
+        "--pass-custom-model", type=str, default=None,
+        help="Path to a HuggingFace repository for automatic model detection and evaluation. "
+             "The system will automatically detect the model architecture and use appropriate default settings."
+    )
+    
     # Pass through additional arguments to run.py
     parser.add_argument("--run-args", type=str, nargs=argparse.REMAINDER, help="Additional arguments for run.py")
     
@@ -473,12 +492,26 @@ def main():
         log_all_existing_results(args.work_dir, args.project)
         
     elif args.run_and_log:
-        if not args.model or not datasets:
-            logger.error("--model and datasets (--data or --dataset) are required for --run-and-log")
+        if not args.model and not args.pass_custom_model:
+            logger.error("Either --model or --pass-custom-model is required for --run-and-log")
+            return
+        if not datasets:
+            logger.error("Datasets (--data or --dataset) are required for --run-and-log")
             return
             
+        # Determine model name for WandB logging and run.py
+        # If both model and custom model are specified, pass the regular model name to run.py
+        # If only custom model is specified, use a placeholder for WandB but let run.py handle the model
+        if args.model:
+            wandb_model_name = args.model
+        elif args.pass_custom_model:
+            # Extract a reasonable name from the custom model path for WandB logging
+            wandb_model_name = args.pass_custom_model.split('/')[-1]
+        else:
+            wandb_model_name = None
+        
         run_urls = run_evaluation_and_log(
-            model_name=args.model,
+            model_name=wandb_model_name,
             dataset_names=datasets,
             work_dir=args.work_dir,
             project=args.project,
@@ -489,6 +522,7 @@ def main():
             save_detailed_eval=args.save_detailed_eval,
             response_format=args.response_format,
             max_output_tokens=args.max_output_tokens,
+            pass_custom_model=args.pass_custom_model,
             additional_args=args.run_args
         )
         

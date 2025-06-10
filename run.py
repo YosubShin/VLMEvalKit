@@ -236,6 +236,22 @@ Response Saving Options:
         
         # Save raw responses for VMCBench  
         python run.py --model GPT4o --data VMCBench_DEV --save-detailed-eval
+        
+Custom Model Support:
+    --pass-custom-model: Automatically detect and evaluate models from HuggingFace repositories
+    
+    Examples:
+        # Evaluate a custom Qwen2-VL model on MMBench
+        python run.py --pass-custom-model Qwen/Qwen2-VL-7B-Instruct --data MMBench_DEV_EN
+        
+        # Evaluate a custom LLaVA model with multiple datasets
+        python run.py --pass-custom-model liuhaotian/llava-v1.5-7b --data MMBench_DEV_EN MMMU_DEV_VAL
+        
+        # Combine custom model with existing models
+        python run.py --model GPT4o --pass-custom-model microsoft/Phi-3-vision-128k-instruct --data MMBench_DEV_EN
+        
+        # Use custom model with VLLM acceleration
+        python run.py --pass-custom-model allenai/Molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 4
 """
     parser = argparse.ArgumentParser(description=help_msg, formatter_class=argparse.RawTextHelpFormatter)
     # Essential Args, Setting the Names of Datasets and Models
@@ -281,6 +297,12 @@ Response Saving Options:
     parser.add_argument(
         '--max-output-tokens', type=int, default=None,
         help='Global override for maximum output tokens. Supersedes all model-specific and dataset-specific token limits.')
+    
+    # Custom model support
+    parser.add_argument(
+        '--pass-custom-model', type=str, default=None,
+        help='Path to a HuggingFace repository for automatic model detection and evaluation. '
+             'The system will automatically detect the model architecture and use appropriate default settings.')
 
     args = parser.parse_args()
     return args
@@ -295,14 +317,47 @@ def main():
         os.environ['VLMEVAL_MAX_OUTPUT_TOKENS'] = str(args.max_output_tokens)
         logger.info(f'Global max output tokens override set to: {args.max_output_tokens}')
     
+    # Handle custom model detection
+    if args.pass_custom_model is not None:
+        try:
+            from vlmeval.utils.model_detection import register_custom_model
+            custom_model_name = register_custom_model(args.pass_custom_model)
+            logger.info(f'Successfully registered custom model: {custom_model_name} -> {args.pass_custom_model}')
+            
+            # Override model argument to use the custom model
+            if args.model is None:
+                args.model = [custom_model_name]
+            else:
+                # If other models were specified, add the custom model to the list
+                args.model.append(custom_model_name)
+                logger.info(f'Added custom model to evaluation list: {args.model}')
+                
+        except Exception as e:
+            logger.error(f'Failed to register custom model {args.pass_custom_model}: {e}')
+            logger.error('Please check that the model path is valid and the model architecture is supported.')
+            logger.error('Supported architectures include: qwen2_vl, qwen_vl, llava, internvl, minicpm, phi, molmo, aria, pixtral, smolvlm, idefics, cogvlm, deepseek, llama-vision, gemma, vila, ovis, bunny, cambrian, mantis, moondream')
+            return
+    
     use_config, cfg = False, None
     if args.config is not None:
-        assert args.data is None and args.model is None, '--data and --model should not be set when using --config'
+        # When using config, don't allow --model unless it's from --pass-custom-model
+        if args.model is not None and args.pass_custom_model is None:
+            raise ValueError('--model should not be set when using --config (unless using --pass-custom-model)')
+        if args.data is not None:
+            raise ValueError('--data should not be set when using --config')
         use_config, cfg = True, load(args.config)
-        args.model = list(cfg['model'].keys())
+        
+        # If we have a custom model, add it to the config models
+        if args.pass_custom_model is not None and args.model is not None:
+            config_models = list(cfg['model'].keys())
+            config_models.extend(args.model)
+            args.model = config_models
+        else:
+            args.model = list(cfg['model'].keys())
         args.data = list(cfg['data'].keys())
     else:
-        assert len(args.data), '--data should be a list of data files'
+        assert args.data is not None and len(args.data), '--data should be a list of data files'
+        assert args.model is not None and len(args.model), '--model should be specified when not using --config'
 
     if RANK == 0:
         if not args.reuse:
