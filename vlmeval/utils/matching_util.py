@@ -21,6 +21,27 @@ def can_infer_option(answer, choices):
         if err in answer:
             return 'Z'
 
+    # First, try to extract from common answer formats using regex
+    # Check for XML-style tags: <answer>D</answer>
+    xml_match = re.search(r'<answer>\s*([A-Z])\s*</answer>', answer, re.IGNORECASE)
+    if xml_match and xml_match.group(1).upper() in choices:
+        return xml_match.group(1).upper()
+    
+    # Check for LaTeX boxed format: \boxed{D}
+    latex_match = re.search(r'\\boxed\s*\{\s*([A-Z])\s*\}', answer, re.IGNORECASE)
+    if latex_match and latex_match.group(1).upper() in choices:
+        return latex_match.group(1).upper()
+    
+    # Check for explicit answer patterns
+    # Matches: "Answer: D", "The answer is D", "The correct answer is D", etc.
+    answer_pattern = re.search(
+        r'(?:(?:The|the)?\s*(?:correct|best|final)?\s*answer\s*(?:is|:)\s*)([A-Z])(?:\s|$|\.|\,)', 
+        answer, 
+        re.IGNORECASE
+    )
+    if answer_pattern and answer_pattern.group(1).upper() in choices:
+        return answer_pattern.group(1).upper()
+
     def count_choice(splits, choices, prefix='', suffix=''):
         cnt = 0
         for c in choices:
@@ -29,7 +50,8 @@ def can_infer_option(answer, choices):
         return cnt
 
     answer_mod = cp.copy(answer)
-    chars = '.()[],:;!*#{}'
+    # Extended character list to include quotes and angle brackets
+    chars = '.()[],:;!*#{}"\'<>'
     for c in chars:
         answer_mod = answer_mod.replace(c, ' ')
 
