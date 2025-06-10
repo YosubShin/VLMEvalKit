@@ -25,9 +25,9 @@ English | [简体中文](/docs/zh-CN/README_zh-CN.md) | [日本語](/docs/ja/REA
 
 **VLMEvalKit** (the python package name is **vlmeval**) is an **open-source evaluation toolkit** of **large vision-language models (LVLMs)**. It enables **one-command evaluation** of LVLMs on various benchmarks, without the heavy workload of data preparation under multiple repositories. In VLMEvalKit, we adopt **generation-based evaluation** for all LVLMs, and provide the evaluation results obtained with both **exact matching** and **LLM-based answer extraction**.
 
-This is the **Data Curation for Vision-Language Reasoning (DCVLR)** edition of VLMEvalKit, introduced by [Oumi AI](github.com/oumi-ai) in support of the [2025 DCVLR Competition](https://dcvlr-neurips.github.io/dcvlr-neurips/). This edition includes several new datasets, refines support for the Molmo series of models, and adds useful features (see 🔥 Enhanced Features).
+This is the **Data Curation for Vision-Language Reasoning (DCVLR)** edition of VLMEvalKit, introduced by [Oumi AI](github.com/oumi-ai) in support of the [2025 Competition Workshop at NeurIPS](https://dcvlr-neurips.github.io/). This edition includes several new datasets, refines support for the Molmo series of models, and adds useful features (see 🔥 Enhanced Features).
 
-Modifications by @penfever, @oelachqar, @NimrodShabtay and @rohunagrawal.
+Modifications to VLMEvalKit are by @penfever, @oelachqar, @NimrodShabtay and @rohunagrawal.
 
 ## 🚀 Key Features
 
@@ -345,7 +345,18 @@ If you find this work helpful, please consider to **star🌟** this repo. Thanks
 
 [![Stargazers repo roster for @open-compass/VLMEvalKit](https://reporoster.com/stars/open-compass/VLMEvalKit)](https://github.com/open-compass/VLMEvalKit/stargazers)
 
-If you use VLMEvalKit in your research or wish to refer to published OpenSource evaluation results, please use the following BibTeX entry and the BibTex entry corresponding to the specific VLM / benchmark you used.
+If you wish to refer to DCVLR in your work, please cite the following:
+
+```bib
+@misc{DCVLR: Data Curation for Vision-Language Reasoning,
+  author = {Feuer, Benjamin and Tripathi, Rohun and Elachqar, Oussama and Zhang, Yuhui and Hulkund, Neha and Nguyen, Thao and Shabtay, Nimrod and Udandarao, Vishaal and Wang, Xiaohan and Webb, Stefan and Koukoumidis, Emmanouil and Schmidt, Ludwig and Xie, Saining and Yeung-Levy, Serena and Liang, Paul and Beery, Sara and Gkioxari, Georgia}
+  month = June,
+  title = {{DCVLR}},
+  year = {2025}
+}
+```
+
+Please use the following BibTeX entry to cite VLMEvalKit:
 
 ```bib
 @inproceedings{duan2024vlmevalkit,
