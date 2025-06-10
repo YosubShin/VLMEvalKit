@@ -292,8 +292,17 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             torch.cuda.set_device(0)
             self.device = 'cuda'
         else:
+            # Try to use flash_attention_2 if available, otherwise fall back to sdpa
+            try:
+                import flash_attn
+                attn_impl = 'flash_attention_2'
+                logging.info("Using flash_attention_2 for attention implementation")
+            except ImportError:
+                attn_impl = 'sdpa'
+                logging.info("flash_attention_2 not available, using sdpa for attention implementation")
+            
             self.model = MODEL_CLS.from_pretrained(
-                model_path, torch_dtype='auto', device_map="auto", attn_implementation='flash_attention_2'
+                model_path, torch_dtype='auto', device_map="auto", attn_implementation=attn_impl
             )
             self.model.eval()
 
