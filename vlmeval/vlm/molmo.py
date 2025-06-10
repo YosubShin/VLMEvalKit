@@ -475,7 +475,7 @@ class molmo(BaseModel):
         # Set up sampling parameters
         sampling_params = SamplingParams(
             temperature=self.temperature,
-            max_tokens=self.max_new_tokens,
+            max_tokens=get_effective_max_tokens(self.max_new_tokens),
             stop=["<|endoftext|>"]  # Molmo stop token
         )
         
@@ -573,7 +573,7 @@ class molmo(BaseModel):
         with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
             output = self.model.generate_from_batch(
                 inputs,
-                GenerationConfig(max_new_tokens=200, stop_strings="<|endoftext|>"),
+                GenerationConfig(max_new_tokens=get_effective_max_tokens(self.max_new_tokens), stop_strings="<|endoftext|>"),
                 tokenizer=self.processor.tokenizer
             )
 
@@ -787,7 +787,7 @@ class molmo(BaseModel):
         # Set up sampling parameters
         sampling_params = SamplingParams(
             temperature=self.temperature,
-            max_tokens=self.max_new_tokens,
+            max_tokens=get_effective_max_tokens(self.max_new_tokens),
             stop=["<|endoftext|>"]  # Molmo stop token
         )
         

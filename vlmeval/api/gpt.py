@@ -189,6 +189,8 @@ class OpenAIWrapper(BaseAPI):
         input_msgs = self.prepare_inputs(inputs)
         temperature = kwargs.pop('temperature', self.temperature)
         max_tokens = kwargs.pop('max_tokens', self.max_tokens)
+        # Apply global token override if set
+        max_tokens = get_effective_max_tokens(max_tokens)
 
         # Will send request if use Azure, dk how to use openai client for it
         if self.use_azure:
@@ -209,15 +211,11 @@ class OpenAIWrapper(BaseAPI):
             payload.pop('temperature')
         else:
             payload['max_tokens'] = max_tokens
-<<<<<<< HEAD
-=======
 
         if 'gemini' in self.model:
             payload.pop('max_tokens')
             payload.pop('n')
             payload['reasoning_effort'] = 'high'
-
->>>>>>> 50b8ff5d6925d66efb05932245fd953915612bbc
         response = requests.post(
             self.api_base,
             headers=headers, data=json.dumps(payload), timeout=self.timeout * 1.1)

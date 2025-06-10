@@ -87,7 +87,7 @@ class GeminiWrapper(BaseAPI):
             # Configure generation parameters
             config_args = {
                 "temperature": self.temperature,
-                "max_output_tokens": self.max_tokens
+                "max_output_tokens": get_effective_max_tokens(self.max_tokens)
             }
 
             # If thinking_budget is specified, add thinking_config

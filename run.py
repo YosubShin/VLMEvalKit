@@ -276,6 +276,11 @@ Response Saving Options:
     parser.add_argument(
         '--response-format', type=str, choices=['json', 'csv', 'xlsx'], default='json',
         help='Format for saving detailed responses (default: json)')
+    
+    # Global token override
+    parser.add_argument(
+        '--max-output-tokens', type=int, default=None,
+        help='Global override for maximum output tokens. Supersedes all model-specific and dataset-specific token limits.')
 
     args = parser.parse_args()
     return args
@@ -284,6 +289,12 @@ Response Saving Options:
 def main():
     logger = get_logger('RUN')
     args = parse_args()
+    
+    # Set global token override if specified
+    if args.max_output_tokens is not None:
+        os.environ['VLMEVAL_MAX_OUTPUT_TOKENS'] = str(args.max_output_tokens)
+        logger.info(f'Global max output tokens override set to: {args.max_output_tokens}')
+    
     use_config, cfg = False, None
     if args.config is not None:
         assert args.data is None and args.model is None, '--data and --model should not be set when using --config'

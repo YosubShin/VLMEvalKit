@@ -29,6 +29,25 @@ def modelscope_flag_set():
     return os.environ.get('VLMEVALKIT_USE_MODELSCOPE', None) in ['1', 'True']
 
 
+def get_effective_max_tokens(default_tokens):
+    """Get the effective max tokens, considering global override.
+    
+    Args:
+        default_tokens (int): The default max tokens for this model/context
+        
+    Returns:
+        int: The effective max tokens to use (global override if set, otherwise default)
+    """
+    global_override = os.environ.get('VLMEVAL_MAX_OUTPUT_TOKENS', None)
+    if global_override is not None:
+        try:
+            return int(global_override)
+        except (ValueError, TypeError):
+            # If global override is invalid, fall back to default
+            pass
+    return default_tokens
+
+
 def process_punctuation(inText):
     import re
     outText = inText

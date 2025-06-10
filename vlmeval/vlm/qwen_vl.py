@@ -5,7 +5,7 @@ import copy as cp
 import string
 import pandas as pd
 from .base import BaseModel
-from ..smp import isimg, listinstr
+from ..smp import isimg, listinstr, get_effective_max_tokens
 from ..dataset import DATASET_TYPE
 
 
@@ -90,6 +90,9 @@ class QwenVL(BaseModel):
                 kwargs['max_new_tokens'] = 100
             elif listinstr(['TextVQA'], dataset):
                 kwargs['max_new_tokens'] = 10
+        
+        # Apply global token override if set
+        kwargs['max_new_tokens'] = get_effective_max_tokens(kwargs['max_new_tokens'])
         return kwargs
 
     def generate_inner(self, message, dataset=None):
