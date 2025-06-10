@@ -30,6 +30,9 @@ Usage:
 
     # Run with custom response format
     python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN --save-judge-responses --response-format xlsx
+
+    # Run with custom max output tokens override
+    python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN --max-output-tokens 2048
 """
 
 import argparse
@@ -235,6 +238,7 @@ def run_evaluation_and_log(
     save_judge_responses: bool = False,
     save_detailed_eval: bool = False,
     response_format: str = 'json',
+    max_output_tokens: Optional[int] = None,
     additional_args: List[str] = None
 ) -> List[str]:
     """Run VLMEvalKit evaluation and log results to WandB."""
@@ -282,6 +286,10 @@ def run_evaluation_and_log(
     
     if response_format != 'json':  # Only add if different from default
         cmd.extend(["--response-format", response_format])
+    
+    # Add max output tokens override
+    if max_output_tokens is not None:
+        cmd.extend(["--max-output-tokens", str(max_output_tokens)])
     
     if additional_args:
         cmd.extend(additional_args)
@@ -428,6 +436,12 @@ def main():
     parser.add_argument("--response-format", type=str, choices=['json', 'csv', 'xlsx'], default='json',
                        help="Format for saving detailed responses")
     
+    # Global token override
+    parser.add_argument(
+        "--max-output-tokens", type=int, default=None,
+        help="Global override for maximum output tokens. Supersedes all model-specific and dataset-specific token limits."
+    )
+    
     # Pass through additional arguments to run.py
     parser.add_argument("--run-args", type=str, nargs=argparse.REMAINDER, help="Additional arguments for run.py")
     
@@ -474,6 +488,7 @@ def main():
             save_judge_responses=args.save_judge_responses,
             save_detailed_eval=args.save_detailed_eval,
             response_format=args.response_format,
+            max_output_tokens=args.max_output_tokens,
             additional_args=args.run_args
         )
         
