@@ -256,7 +256,8 @@ def create_custom_model_entry(model_path: str, model_name: Optional[str] = None)
     detected_class, config = detect_model_architecture(model_path)
     
     if model_name is None:
-        model_name = model_path.split('/')[-1] if '/' in model_path else model_path
+        # Replace slashes with underscores to preserve org name and avoid directory issues
+        model_name = model_path.replace('/', '_') if '/' in model_path else model_path
     
     # Import the detected class
     try:
