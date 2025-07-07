@@ -12,8 +12,6 @@ Usage:
         --llm-backend openai \
         --model gpt-4o-mini \
         --verbose
-
-Author: Generated with Claude Code
 """
 
 import argparse
@@ -68,7 +66,7 @@ class VMCBenchScorer:
     
     def __init__(self, benchmarks: List[str], input_dir: str, output_dir: Optional[str] = None,
                  llm_backend: str = 'openai', model: str = 'gpt-4o-mini', 
-                 api_key: Optional[str] = None, verbose: bool = False, max_samples: Optional[int] = None):
+                 api_key: Optional[str] = None, verbose: bool = False, max_samples: Optional[int] = None, resume: bool = False):
         """
         Initialize the VMCBench scorer.
         
@@ -81,12 +79,14 @@ class VMCBenchScorer:
             api_key: API key for LLM service
             verbose: Enable verbose logging
             max_samples: Maximum number of samples to process per benchmark (for testing)
+            resume: Resume from existing results file by skipping processed samples
         """
         self.benchmarks = benchmarks
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir) if output_dir else self.input_dir
         self.verbose = verbose
         self.max_samples = max_samples
+        self.resume = resume
         
         # Validate benchmarks
         for benchmark in benchmarks:
@@ -149,12 +149,13 @@ class VMCBenchScorer:
         
         return found_files
     
-    def load_benchmark_data(self, file_path: Path) -> pd.DataFrame:
+    def load_benchmark_data(self, file_path: Path, benchmark_name: str) -> pd.DataFrame:
         """
         Load benchmark data from XLSX file.
         
         Args:
             file_path: Path to XLSX file
+            benchmark_name: Name of the benchmark being processed
             
         Returns:
             DataFrame with benchmark data
@@ -168,6 +169,16 @@ class VMCBenchScorer:
             missing_cols = [col for col in required_cols if col not in df.columns]
             if missing_cols:
                 raise ValueError(f"Missing required columns: {missing_cols}")
+            
+            # Ensure we have a unique identifier column
+            if 'index' not in df.columns and df.index.name != 'index':
+                df = df.reset_index(drop=False)
+                if 'index' not in df.columns:
+                    df['index'] = range(len(df))
+            
+            # Handle resume mode
+            if self.resume:
+                df = self._filter_unprocessed_samples(df, file_path, benchmark_name)
             
             # Convert to string and handle NaN values
             df['answer'] = df['answer'].astype(str).fillna('')
@@ -202,6 +213,75 @@ class VMCBenchScorer:
                 choices[choice_letter] = str(row[choice_letter])
         return choices
     
+    def _filter_unprocessed_samples(self, df: pd.DataFrame, file_path: Path, benchmark_name: str) -> pd.DataFrame:
+        """
+        Filter out samples that have already been processed when resuming.
+        
+        Args:
+            df: Input DataFrame
+            file_path: Path to the input file
+            benchmark_name: Name of the benchmark
+            
+        Returns:
+            DataFrame with only unprocessed samples
+        """
+        output_path = self.output_dir / f"{file_path.stem}_scored.xlsx"
+        
+        if not output_path.exists():
+            raise FileNotFoundError(
+                f"Resume mode enabled but no existing results file found at: {output_path}. "
+                f"Remove --resume flag to create a new results file."
+            )
+        
+        try:
+            # Load existing results
+            existing_df = pd.read_excel(output_path)
+            self.logger.info(f"Found existing results file with {len(existing_df)} rows")
+            
+            # Get processed sample indices/IDs
+            if 'index' in existing_df.columns:
+                processed_indices = set(existing_df['index'].values)
+            else:
+                processed_indices = set(existing_df.index.values)
+            
+            # Filter out processed samples
+            if 'index' in df.columns:
+                mask = ~df['index'].isin(processed_indices)
+            else:
+                mask = ~df.index.isin(processed_indices)
+            
+            unprocessed_df = df[mask].reset_index(drop=True)
+            
+            self.logger.info(
+                f"Resume mode: Found {len(existing_df)} processed samples, "
+                f"{len(unprocessed_df)} samples remaining to process"
+            )
+            
+            return unprocessed_df
+            
+        except Exception as e:
+            raise RuntimeError(
+                f"Error reading existing results file {output_path}: {e}. "
+                f"File may be corrupted or in wrong format."
+            )
+    
+    def _append_results_to_existing(self, new_results: pd.DataFrame, output_path: Path):
+        """
+        Append new results to existing results file.
+        
+        Args:
+            new_results: New DataFrame with results to append
+            output_path: Path to the existing results file
+        """
+        try:
+            existing_df = pd.read_excel(output_path)
+            combined_df = pd.concat([existing_df, new_results], ignore_index=True)
+            combined_df.to_excel(output_path, index=False)
+            self.logger.info(f"Appended {len(new_results)} new results to existing file")
+        except Exception as e:
+            self.logger.error(f"Error appending results: {e}")
+            raise
+    
     def process_benchmark(self, benchmark_name: str, file_path: Path):
         """
         Process a single benchmark file through the 4-stage pipeline.
@@ -213,15 +293,26 @@ class VMCBenchScorer:
         self.logger.info(f"Processing benchmark: {benchmark_name}")
         
         # Load data
-        df = self.load_benchmark_data(file_path)
+        df = self.load_benchmark_data(file_path, benchmark_name)
+        
+        # Check if there are any samples to process
+        if len(df) == 0:
+            self.logger.info(f"No samples to process for {benchmark_name} (all already processed)")
+            return
         
         # Apply 4-stage pipeline
         df_scored = self.apply_four_stage_pipeline(df)
         
         # Save results
         output_path = self.output_dir / f"{file_path.stem}_scored.xlsx"
-        df_scored.to_excel(output_path, index=False)
-        self.logger.info(f"Saved scored results to: {output_path}")
+        
+        if self.resume and output_path.exists():
+            # Append to existing results
+            self._append_results_to_existing(df_scored, output_path)
+        else:
+            # Create new results file
+            df_scored.to_excel(output_path, index=False)
+            self.logger.info(f"Saved scored results to: {output_path}")
         
         # Print summary statistics
         self._print_summary_stats(df_scored, benchmark_name)
@@ -854,6 +945,13 @@ Examples:
       --llm-backend openai --model gpt-4o-mini \\
       --max-samples 50 --verbose
       
+  # Resume from existing results (skip processed samples)
+  python scripts/vmcbench_standalone_scorer.py \\
+      --benchmarks VMCBench_DEV \\
+      --input-dir results/full/Qwen2.5-VL-7B-Instruct \\
+      --llm-backend openai --model gpt-4o-mini \\
+      --resume --verbose
+      
   # Process with Anthropic backend
   python scripts/vmcbench_standalone_scorer.py \\
       --benchmarks VMCBench_DEV \\
@@ -902,6 +1000,11 @@ Examples:
         type=int,
         help='Maximum number of samples to process per benchmark (for testing)'
     )
+    parser.add_argument(
+        '--resume',
+        action='store_true',
+        help='Resume from existing results file by skipping already processed samples'
+    )
     
     args = parser.parse_args()
     
@@ -914,7 +1017,8 @@ Examples:
         model=args.model,
         api_key=args.api_key,
         verbose=args.verbose,
-        max_samples=args.max_samples
+        max_samples=args.max_samples,
+        resume=args.resume
     )
     
     scorer.process_all()
