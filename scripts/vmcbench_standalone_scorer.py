@@ -466,20 +466,22 @@ class VMCBenchScorer:
             heuristic_info = f"GT_len={len(answer.strip())}, MCQ/Bool={'enabled' if len(answer.strip()) < 15 else 'disabled'}, Strict_length_filter=enabled"
             return prediction, False, f"No matches found across all strategies | Heuristics: {heuristic_info}"
     
-    def stage3_llm_judge(self, prediction: str, answer: str) -> Tuple[str, bool, str]:
+    def stage3_llm_judge(self, prediction: str, answer: str, choices_dict: Optional[Dict[str, str]] = None) -> Tuple[str, bool, str]:
         """
         Stage 3: LLM equivalence checking.
         
         Uses the initialized LLM judge to determine semantic equivalence.
+        For multiple choice questions (LiveXivVQA, VMCBench_DEV), provides choice context.
         
         Args:
             prediction: Model's prediction
             answer: Ground truth answer
+            choices_dict: Optional dictionary mapping choice letters to their values (A->value, B->value, etc.)
             
         Returns:
             Tuple of (extracted_answer, success, error_message)
         """
-        return self.llm_judge.judge_equivalence(prediction, answer)
+        return self.llm_judge.judge_equivalence(prediction, answer, choices_dict)
     
     # Unified extraction methods for Stage 2 with position tracking
     def _extract_latex_boxed_with_positions(self, prediction: str) -> List[Tuple[str, int, int]]:
@@ -987,7 +989,7 @@ class VMCBenchScorer:
             # Stage 3: LLM judge (if Stages 1-2 failed)
             if not (stage1_success or stage2_success):
                 try:
-                    stage3_result, stage3_success, stage3_error = self.stage3_llm_judge(prediction, answer)
+                    stage3_result, stage3_success, stage3_error = self.stage3_llm_judge(prediction, answer, choices_dict)
                     if stage3_success:
                         row_result['stage3_match'] = 1
                         final_answer = stage3_result
@@ -1011,7 +1013,17 @@ class VMCBenchScorer:
             
             # Set final results
             row_result['final_answer'] = final_answer or "NOMATCH"
-            row_result['hit'] = 1 if final_answer == answer else 0
+            
+            # Determine scoring method based on answer_type column
+            if 'answer_type' in row and row['answer_type'] == 'float':
+                # Use MRA (Mean Relative Accuracy) scoring for float answer types
+                score_result = self._calculate_mra_score(final_answer, answer)
+                row_result['hit'] = score_result['score']
+                row_result['mra_details'] = score_result.get('mra_details', '')
+            else:
+                # Use exact match scoring for all other answer types
+                row_result['hit'] = 1 if final_answer == answer else 0
+                
             row_result['stage_errors'] = " | ".join(errors)
             
             results.append(row_result)
@@ -1019,6 +1031,76 @@ class VMCBenchScorer:
         # Combine original data with results
         results_df = pd.DataFrame(results)
         return pd.concat([df, results_df], axis=1)
+    
+    def _calculate_mra_score(self, predicted_answer: str, ground_truth_answer: str) -> dict:
+        """
+        Calculate Mean Relative Accuracy (MRA) score for float answer types.
+        
+        MRA methodology from VSI-Bench paper (https://arxiv.org/abs/2412.14171):
+        - Tests prediction accuracy at multiple relative error thresholds
+        - MRA = average accuracy across all thresholds
+        - Formula: |ground_truth - prediction| / ground_truth < threshold
+        
+        Args:
+            predicted_answer: The predicted answer string
+            ground_truth_answer: The ground truth answer string
+            
+        Returns:
+            Dictionary containing MRA score and details
+        """
+        # MRA thresholds from Omni3DBench implementation
+        mra_thresholds = [0.5, 0.45, 0.40, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.05]
+        
+        try:
+            # Convert to float values
+            pred_float = float(predicted_answer)
+            gt_float = float(ground_truth_answer)
+            
+            # Handle division by zero
+            if gt_float == 0:
+                if pred_float == 0:
+                    # Both are zero - perfect match
+                    return {
+                        'score': 1.0,
+                        'mra_details': 'Perfect match: both values are zero',
+                        'threshold_scores': {str(t): 1.0 for t in mra_thresholds}
+                    }
+                else:
+                    # Ground truth is zero but prediction is not - no match
+                    return {
+                        'score': 0.0,
+                        'mra_details': 'No match: ground truth is zero but prediction is not',
+                        'threshold_scores': {str(t): 0.0 for t in mra_thresholds}
+                    }
+            
+            # Calculate relative error: |gt - pred| / gt
+            relative_error = abs(gt_float - pred_float) / abs(gt_float)
+            
+            # Test each threshold
+            threshold_scores = {}
+            for threshold in mra_thresholds:
+                if relative_error < threshold:
+                    threshold_scores[str(threshold)] = 1.0
+                else:
+                    threshold_scores[str(threshold)] = 0.0
+            
+            # Calculate MRA as average across all thresholds
+            mra_score = sum(threshold_scores.values()) / len(mra_thresholds)
+            
+            return {
+                'score': mra_score,
+                'mra_details': f'Relative_error={relative_error:.4f}, MRA={mra_score:.3f}',
+                'threshold_scores': threshold_scores,
+                'relative_error': relative_error
+            }
+            
+        except (ValueError, TypeError) as e:
+            # Could not convert to float - return zero score
+            return {
+                'score': 0.0,
+                'mra_details': f'Type conversion error: {e}',
+                'threshold_scores': {str(t): 0.0 for t in mra_thresholds}
+            }
     
     def _print_summary_stats(self, df: pd.DataFrame, benchmark_name: str):
         """Print summary statistics for the scored benchmark."""
@@ -1035,8 +1117,24 @@ class VMCBenchScorer:
         
         print(f"\n=== {benchmark_name} Summary ===")
         print(f"Total rows: {total_rows}")
-        print(f"Correct answers (hits): {hits}")
-        print(f"Accuracy: {accuracy:.3f}")
+        print(f"Score total: {hits:.3f}")  # Changed to show fractional scores for MRA
+        print(f"Average score: {accuracy:.3f}")
+        
+        # Check if we have MRA scoring (float answer types)
+        if 'answer_type' in df.columns:
+            float_rows = df[df['answer_type'] == 'float']
+            if len(float_rows) > 0:
+                float_score = float_rows['hit'].sum()
+                float_avg = float_score / len(float_rows)
+                print(f"MRA scoring (float types): {len(float_rows)} rows, avg score: {float_avg:.3f}")
+                
+                # Show breakdown by answer type
+                for answer_type in df['answer_type'].unique():
+                    type_rows = df[df['answer_type'] == answer_type]
+                    type_score = type_rows['hit'].sum()
+                    type_avg = type_score / len(type_rows) if len(type_rows) > 0 else 0
+                    print(f"  {answer_type} type: {len(type_rows)} rows, avg score: {type_avg:.3f}")
+        
         print("\nStage success counts:")
         for stage, count in stage_stats.items():
             percentage = count / total_rows * 100 if total_rows > 0 else 0
@@ -1202,14 +1300,40 @@ Return a JSON response with this exact format:
 Focus on semantic meaning rather than exact text matching.
 Consider responses equivalent if they convey the same core meaning, even if wording differs.
 """
+
+    USER_PROMPT_WITH_CHOICES_TEMPLATE = """
+Compare the following model response to the ground truth answer for a multiple choice question. Extract the model's actual answer from its response, and then determine if the extracted answer is semantically or mathematically equivalent to the ground truth. The model may reference choice letters (A, B, C, D) or the actual choice values.
+
+Multiple Choice Options:
+{choices_context}
+
+Response 1 (Model): {prediction}
+Response 2 (Ground Truth): {answer} (which corresponds to the value: {correct_choice_value})
+
+Return a JSON response with this exact format:
+{{
+    "equivalent": true/false,
+    "confidence": 0.0-1.0,
+    "reasoning": "brief explanation"
+}}
+
+Consider responses equivalent if:
+- The model selects the correct choice letter ({answer})
+- The model provides the correct choice value ({correct_choice_value})
+- The model's answer is semantically equivalent to the correct choice value
+- The model's reasoning leads to the correct conclusion even if not explicitly stated
+
+Focus on semantic meaning rather than exact text matching.
+"""
     
-    def judge_equivalence(self, prediction: str, answer: str) -> Tuple[str, bool, str]:
+    def judge_equivalence(self, prediction: str, answer: str, choices_dict: Optional[Dict[str, str]] = None) -> Tuple[str, bool, str]:
         """
         Judge semantic equivalence between prediction and answer.
         
         Args:
             prediction: Model's prediction
             answer: Ground truth answer
+            choices_dict: Optional dictionary mapping choice letters to their values
             
         Returns:
             Tuple of (extracted_answer, success, error_message)
@@ -1224,12 +1348,23 @@ class OpenAIJudge(LLMEquivalenceJudge):
         self.model = model
         self.client = openai.OpenAI(api_key=api_key or os.getenv('OPENAI_API_KEY'))
         
-    def judge_equivalence(self, prediction: str, answer: str) -> Tuple[str, bool, str]:
+    def judge_equivalence(self, prediction: str, answer: str, choices_dict: Optional[Dict[str, str]] = None) -> Tuple[str, bool, str]:
         """Judge equivalence using OpenAI API."""
         try:
-            # Safely format the prompt by replacing placeholders
-            user_prompt = self.USER_PROMPT_TEMPLATE.replace("{prediction}", str(prediction))
-            user_prompt = user_prompt.replace("{answer}", str(answer))
+            # Choose appropriate template based on whether choices are available
+            if choices_dict and answer in choices_dict:
+                # Multiple choice context available
+                choices_context = "\n".join([f"{letter}: {value}" for letter, value in choices_dict.items()])
+                correct_choice_value = choices_dict[answer]
+                
+                user_prompt = self.USER_PROMPT_WITH_CHOICES_TEMPLATE.replace("{prediction}", str(prediction))
+                user_prompt = user_prompt.replace("{answer}", str(answer))
+                user_prompt = user_prompt.replace("{choices_context}", choices_context)
+                user_prompt = user_prompt.replace("{correct_choice_value}", str(correct_choice_value))
+            else:
+                # Standard template for non-multiple choice or when choices not available
+                user_prompt = self.USER_PROMPT_TEMPLATE.replace("{prediction}", str(prediction))
+                user_prompt = user_prompt.replace("{answer}", str(answer))
             
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -1272,12 +1407,23 @@ class AnthropicJudge(LLMEquivalenceJudge):
         self.model = model
         self.client = anthropic.Anthropic(api_key=api_key or os.getenv('ANTHROPIC_API_KEY'))
         
-    def judge_equivalence(self, prediction: str, answer: str) -> Tuple[str, bool, str]:
+    def judge_equivalence(self, prediction: str, answer: str, choices_dict: Optional[Dict[str, str]] = None) -> Tuple[str, bool, str]:
         """Judge equivalence using Anthropic API."""
         try:
-            # Safely format the prompt by replacing placeholders
-            user_prompt = self.USER_PROMPT_TEMPLATE.replace("{prediction}", str(prediction))
-            user_prompt = user_prompt.replace("{answer}", str(answer))
+            # Choose appropriate template based on whether choices are available
+            if choices_dict and answer in choices_dict:
+                # Multiple choice context available
+                choices_context = "\n".join([f"{letter}: {value}" for letter, value in choices_dict.items()])
+                correct_choice_value = choices_dict[answer]
+                
+                user_prompt = self.USER_PROMPT_WITH_CHOICES_TEMPLATE.replace("{prediction}", str(prediction))
+                user_prompt = user_prompt.replace("{answer}", str(answer))
+                user_prompt = user_prompt.replace("{choices_context}", choices_context)
+                user_prompt = user_prompt.replace("{correct_choice_value}", str(correct_choice_value))
+            else:
+                # Standard template for non-multiple choice or when choices not available
+                user_prompt = self.USER_PROMPT_TEMPLATE.replace("{prediction}", str(prediction))
+                user_prompt = user_prompt.replace("{answer}", str(answer))
             
             response = self.client.messages.create(
                 model=self.model,
