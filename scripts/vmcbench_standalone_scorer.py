@@ -1373,7 +1373,9 @@ class OpenAIJudge(LLMEquivalenceJudge):
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.0,
-                max_tokens=200
+                max_tokens=512,
+                # Note: max_completion_tokens controls response length, input token limit is model-dependent
+                # OpenAI models like gpt-4o-mini support up to 128k input tokens by default
             )
             
             response_text = response.choices[0].message.content
@@ -1430,7 +1432,9 @@ class AnthropicJudge(LLMEquivalenceJudge):
                 system=self.SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
                 temperature=0.0,
-                max_tokens=200
+                max_tokens=512
+                # Note: Anthropic models have generous input token limits (200k+ for Claude models)
+                # Input token handling is automatic and doesn't require explicit configuration
             )
             
             response_text = response.content[0].text
