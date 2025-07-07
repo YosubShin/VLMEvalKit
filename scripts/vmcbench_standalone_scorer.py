@@ -319,10 +319,15 @@ class VMCBenchScorer:
     
     def stage1_simple_match(self, prediction: str, answer: str) -> Tuple[str, bool, str]:
         """
-        Stage 1: Simple matching strategies.
+        Stage 1: Simple exact matching strategies only.
         
-        Includes exact matches, case-insensitive matches, whitespace handling,
-        single character extraction, True/False matching, and number extraction.
+        Applies only the most conservative exact matching strategies:
+        1. Exact match: prediction == answer (after stripping)
+        2. Case-insensitive match: prediction.lower() == answer.lower()
+        3. Whitespace-normalized match: handles extra/missing whitespace
+        
+        Note: Moved single character extraction and boolean pattern matching to Stage 2
+        to consolidate with similar strategies and reduce duplication.
         
         Args:
             prediction: Model's prediction
@@ -349,49 +354,6 @@ class VMCBenchScorer:
         if pred_no_space.lower() == answer_no_space.lower():
             return answer_clean, True, "Whitespace-normalized match"
         
-        # Strategy 4: Single character extraction (for MCQ)
-        single_char_pattern = r'\b([A-I])\b'
-        pred_chars = re.findall(single_char_pattern, pred_clean.upper())
-        if pred_chars and pred_chars[0] == answer_clean.upper():
-            return answer_clean, True, f"Single character match: {pred_chars[0]}"
-        
-        # Strategy 5: True/False pattern matching
-        true_patterns = ['true', 'yes', 'correct', 'right']
-        false_patterns = ['false', 'no', 'incorrect', 'wrong']
-        
-        pred_lower = pred_clean.lower()
-        answer_lower = answer_clean.lower()
-        
-        if answer_lower in true_patterns:
-            for pattern in true_patterns:
-                if pattern in pred_lower:
-                    return answer_clean, True, f"True/Yes pattern match: {pattern}"
-        
-        if answer_lower in false_patterns:
-            for pattern in false_patterns:
-                if pattern in pred_lower:
-                    return answer_clean, True, f"False/No pattern match: {pattern}"
-        
-        # Strategy 6: Number extraction
-        pred_numbers = re.findall(r'-?\d+\.?\d*', pred_clean)
-        answer_numbers = re.findall(r'-?\d+\.?\d*', answer_clean)
-        
-        if pred_numbers and answer_numbers:
-            try:
-                pred_num = float(pred_numbers[0])
-                answer_num = float(answer_numbers[0])
-                if abs(pred_num - answer_num) < 1e-6:
-                    return answer_clean, True, f"Numerical match: {pred_num} ≈ {answer_num}"
-            except ValueError:
-                pass
-        
-        # Strategy 7: Substring matching (prediction contains answer or vice versa)
-        if answer_clean.lower() in pred_clean.lower():
-            return answer_clean, True, "Answer substring in prediction"
-        
-        if pred_clean.lower() in answer_clean.lower() and len(pred_clean) > 2:
-            return answer_clean, True, "Prediction substring in answer"
-        
         return pred_clean, False, "No simple match found"
     
     def stage2_complex_match(self, prediction: str, answer: str, 
@@ -402,7 +364,11 @@ class VMCBenchScorer:
         Behavior:
         - Searches from END of response to prioritize final answers over intermediate work
         - Collects ALL matches from ALL strategies for full visibility
-        - Uses priority order for final selection: LaTeX > Math > Tags > MCQ > Language > Boolean > Numeric > SymPy
+        - Uses priority order: LaTeX > Math > Tags > SymPy > MCQ* > Language > Boolean*
+        - Applies heuristics to reduce false positives:
+          * MCQ and Boolean detectors only run when ground truth is short (<15 chars)
+          * Numeric detector removed completely (too many false positives)
+          * SymPy equivalence prioritized above simple pattern matching
         - Returns first successful match but reports all findings in error message
         - Includes match positions in text for debugging
         
@@ -414,16 +380,26 @@ class VMCBenchScorer:
         Returns:
             Tuple of (extracted_answer, success, detailed_match_report)
         """
-        strategies = [
+        # Define core strategies (always run)
+        core_strategies = [
             ("LaTeX Boxed", lambda: self._extract_latex_boxed_with_positions(prediction)),
             ("Math Expressions", lambda: self._extract_math_expressions_with_positions(prediction)),
             ("Structured Tags", lambda: self._extract_structured_tags_with_positions(prediction)),
-            ("Multiple Choice", lambda: self._extract_multiple_choice_with_positions(prediction, choices_dict)),
+            ("SymPy Equivalence", lambda: self._check_mathematical_equivalence_with_positions(prediction, answer)),
             ("Natural Language", lambda: self._extract_natural_language_with_positions(prediction)),
-            ("Boolean Answers", lambda: self._extract_boolean_answers_with_positions(prediction)),
-            ("Numeric Answers", lambda: self._extract_numeric_answers_with_positions(prediction)),
-            ("SymPy Equivalence", lambda: self._check_mathematical_equivalence_with_positions(prediction, answer))
         ]
+        
+        # Define conditional strategies (only run when ground truth is short)
+        conditional_strategies = []
+        if len(answer.strip()) < 15:  # Only run for short ground truth to reduce false positives
+            conditional_strategies.extend([
+                ("Multiple Choice", lambda: self._extract_multiple_choice_with_positions(prediction, choices_dict)),
+                ("Boolean Answers", lambda: self._extract_boolean_answers_with_positions(prediction)),
+            ])
+        
+        # Combine strategies in priority order
+        strategies = core_strategies + conditional_strategies
+        # Note: Numeric Answers detector removed completely due to excessive false positive risk
         
         all_matches = []
         selected_result = None
@@ -463,7 +439,9 @@ class VMCBenchScorer:
             for strategy, error, _, _ in error_matches:
                 match_details.append(f"{strategy}: {error}")
             
-            match_report = f"Matches found: {'; '.join(match_details)}"
+            # Add heuristic info to report
+            heuristic_info = f"GT_len={len(answer.strip())}, MCQ/Bool={'enabled' if len(answer.strip()) < 15 else 'disabled'}"
+            match_report = f"Matches found: {'; '.join(match_details)} | Heuristics: {heuristic_info}"
             
             if selected_result:
                 # Check if selected result matches ground truth
@@ -474,7 +452,8 @@ class VMCBenchScorer:
             else:
                 return prediction, False, f"NO VALID EXTRACTION | {match_report}"
         else:
-            return prediction, False, "No matches found across all strategies"
+            heuristic_info = f"GT_len={len(answer.strip())}, MCQ/Bool={'enabled' if len(answer.strip()) < 15 else 'disabled'}"
+            return prediction, False, f"No matches found across all strategies | Heuristics: {heuristic_info}"
     
     def stage3_llm_judge(self, prediction: str, answer: str) -> Tuple[str, bool, str]:
         """
@@ -649,13 +628,14 @@ class VMCBenchScorer:
         return matches[-1][0] if matches else None
     
     def _extract_multiple_choice_with_positions(self, prediction: str, choices_dict: Optional[Dict[str, str]]) -> List[Tuple[str, int, int]]:
-        """Extract multiple choice answers with positions."""
+        """Extract multiple choice answers with positions (enhanced with Stage 1 logic)."""
         matches = []
         
         if not choices_dict:
-            # Generic MCQ extraction without specific choices
+            # Generic MCQ extraction without specific choices (enhanced with Stage 1 patterns)
             mcq_patterns = [
-                r'(?:^|\s)([A-I])(?:\s|$|\.|,)',  # Single letter
+                r'\b([A-I])\b',  # Isolated single letter (merged from Stage 1)
+                r'(?:^|\s)([A-I])(?:\s|$|\.|,)',  # Single letter with boundaries
                 r'(?:is|are)\s+([A-I])(?:\s|$|\.|,)',  # "The answer is A"
                 r'(?:option|choice)\s+([A-I])(?:\s|$|\.|,)',  # "Option A"
                 r'([A-I])\s*(?:is|are)\s*(?:correct|right)',  # "A is correct"
@@ -790,21 +770,21 @@ class VMCBenchScorer:
         return matches[-1][0] if matches else None
     
     def _extract_boolean_answers_with_positions(self, prediction: str) -> List[Tuple[str, int, int]]:
-        """Extract boolean answers with positions."""
+        """Extract boolean answers with positions (enhanced with Stage 1 logic)."""
         matches = []
         pred_lower = prediction.lower()
         
-        # Yes patterns
-        yes_patterns = ['yes', 'true', 'correct', 'right']
-        no_patterns = ['no', 'false', 'incorrect', 'wrong']
+        # Enhanced patterns (merged from Stage 1)
+        true_patterns = ['yes', 'true', 'correct', 'right']
+        false_patterns = ['no', 'false', 'incorrect', 'wrong']
         
-        # Find all yes patterns
-        for pattern in yes_patterns:
+        # Find all true/yes patterns
+        for pattern in true_patterns:
             for match in re.finditer(r'\b' + pattern + r'\b', pred_lower):
                 matches.append(('yes', match.start(), match.end()))
         
-        # Find all no patterns  
-        for pattern in no_patterns:
+        # Find all false/no patterns  
+        for pattern in false_patterns:
             for match in re.finditer(r'\b' + pattern + r'\b', pred_lower):
                 matches.append(('no', match.start(), match.end()))
         
