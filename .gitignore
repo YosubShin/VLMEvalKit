@@ -203,3 +203,15 @@ tmp/
 InternVL*
 Qwen*
 CongRong*
+
+## CLAUDE FILES
+.claude
+CLAUDE.md
+
+## Results files
+
+results
+
+## Local notes
+
+notes
