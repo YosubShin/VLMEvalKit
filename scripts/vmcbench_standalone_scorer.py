@@ -397,10 +397,9 @@ class VMCBenchScorer:
     def stage2_complex_match(self, prediction: str, answer: str, 
                            choices_dict: Optional[Dict[str, str]] = None) -> Tuple[str, bool, str]:
         """
-        Stage 2: Complex matching strategies from all benchmarks.
+        Stage 2: Unified complex extraction strategies.
         
-        Combines sophisticated extraction logic from VMCBench, Omni3DBench,
-        OlympiadBench, and atomic_dataset.
+        Applies generalized extraction patterns that work across all benchmark types.
         
         Args:
             prediction: Model's prediction
@@ -411,14 +410,14 @@ class VMCBenchScorer:
             Tuple of (extracted_answer, success, error_message)
         """
         strategies = [
-            ("VMCBench MCQ", lambda: self._vmcbench_mcq_parsing(prediction, choices_dict)),
-            ("Omni3D Tags", lambda: self._omni3d_extraction(prediction)),
-            ("Olympiad Math", lambda: self._olympiad_math_extraction(prediction)),
-            ("Atomic Physics", lambda: self._atomic_physics_extraction(prediction)),
-            ("SymPy Equivalence", lambda: self._sympy_equivalence_check(prediction, answer)),
-            ("LaTeX Parsing", lambda: self._latex_expression_parsing(prediction)),
-            ("Structured Tags", lambda: self._structured_tag_extraction(prediction)),
-            ("Pattern Extraction", lambda: self._pattern_based_extraction(prediction))
+            ("LaTeX Boxed", lambda: self._extract_latex_boxed(prediction)),
+            ("Math Expressions", lambda: self._extract_math_expressions(prediction)),
+            ("Structured Tags", lambda: self._extract_structured_tags(prediction)),
+            ("Multiple Choice", lambda: self._extract_multiple_choice(prediction, choices_dict)),
+            ("Natural Language", lambda: self._extract_natural_language_answers(prediction)),
+            ("Boolean Answers", lambda: self._extract_boolean_answers(prediction)),
+            ("Numeric Answers", lambda: self._extract_numeric_answers(prediction)),
+            ("SymPy Equivalence", lambda: self._check_mathematical_equivalence(prediction, answer))
         ]
         
         for strategy_name, strategy_func in strategies:
@@ -451,12 +450,100 @@ class VMCBenchScorer:
         """
         return self.llm_judge.judge_equivalence(prediction, answer)
     
-    # Helper methods for Stage 2 complex matching
-    def _vmcbench_mcq_parsing(self, prediction: str, choices_dict: Optional[Dict[str, str]]) -> Optional[str]:
-        """VMCBench multiple choice parsing logic."""
-        if not choices_dict:
-            return None
+    # Unified extraction methods for Stage 2
+    def _extract_latex_boxed(self, prediction: str) -> Optional[str]:
+        """Extract content from LaTeX \boxed{} format with nested bracket support."""
+        # Method 1: Complex nested bracket parsing (most robust)
+        boxed_matches = re.finditer(r'\\boxed{', prediction)
+        results = []
+        
+        for match in boxed_matches:
+            start_index = match.end()
+            end_index = start_index
+            stack = 1
             
+            while stack > 0 and end_index < len(prediction):
+                if prediction[end_index] == '{':
+                    stack += 1
+                elif prediction[end_index] == '}':
+                    stack -= 1
+                end_index += 1
+            
+            if stack == 0:
+                content = prediction[start_index:end_index - 1]
+                results.append(content.strip())
+        
+        if results:
+            return results[-1]  # Return last (most recent) boxed content
+        
+        # Method 2: Simple regex fallback for basic cases
+        simple_pattern = r'\\boxed{([^{}]*(?:{[^{}]*}[^{}]*)*)}'
+        matches = re.findall(simple_pattern, prediction)
+        if matches:
+            return matches[-1].strip()
+        
+        return None
+    
+    def _extract_math_expressions(self, prediction: str) -> Optional[str]:
+        """Extract mathematical expressions from various formats."""
+        # Dollar-wrapped math: $expression$
+        dollar_pattern = r'\$([^$]+)\$'
+        dollar_matches = re.findall(dollar_pattern, prediction)
+        if dollar_matches:
+            return dollar_matches[-1].strip()
+        
+        # LaTeX expressions without \boxed
+        if SYMPY_AVAILABLE:
+            try:
+                from sympy.parsing.latex import parse_latex
+                expr = parse_latex(prediction)
+                return str(expr)
+            except Exception:
+                pass
+        else:
+            self.logger.warning("SymPy not available - LaTeX expression parsing disabled. Install with: pip install sympy")
+        
+        return None
+    
+    def _extract_structured_tags(self, prediction: str) -> Optional[str]:
+        """Extract content from structured XML-style tags and brackets."""
+        # XML-style tags
+        tag_patterns = [
+            r'<ans>(.*?)</ans>',           # Omni3D format
+            r'<answer>(.*?)</answer>',     # Generic answer tags
+            r'<result>(.*?)</result>',     # Result tags
+            r'<final>(.*?)</final>',       # Final answer tags
+            r'\[ANSWER\](.*?)\[/ANSWER\]', # Bracket format
+            r'\[ANS\](.*?)\[/ANS\]',       # Alternative bracket
+        ]
+        
+        for pattern in tag_patterns:
+            match = re.search(pattern, prediction, re.IGNORECASE | re.DOTALL)
+            if match:
+                return match.group(1).strip()
+        
+        return None
+    
+    def _extract_multiple_choice(self, prediction: str, choices_dict: Optional[Dict[str, str]]) -> Optional[str]:
+        """Extract multiple choice answers (A, B, C, D, etc.)."""
+        if not choices_dict:
+            # Generic MCQ extraction without specific choices
+            mcq_patterns = [
+                r'(?:^|\s)([A-I])(?:\s|$|\.|,)',  # Single letter
+                r'(?:is|are)\s+([A-I])(?:\s|$|\.|,)',  # "The answer is A"
+                r'(?:option|choice)\s+([A-I])(?:\s|$|\.|,)',  # "Option A"
+                r'([A-I])\s*(?:is|are)\s*(?:correct|right)',  # "A is correct"
+                r'\(([A-I])\)',  # (A)
+                r'([A-I])\.',    # A.
+            ]
+            
+            for pattern in mcq_patterns:
+                matches = re.findall(pattern, prediction, re.IGNORECASE)
+                if matches:
+                    return matches[0].upper().strip()
+            return None
+        
+        # Specific choice-based extraction
         response = str(prediction)
         all_choices = list(choices_dict.keys())
         
@@ -484,104 +571,66 @@ class VMCBenchScorer:
                 if choice_text.lower() in response.lower():
                     candidates.append(choice)
         
-        # Return first candidate or None
         return candidates[0] if candidates else None
     
-    def _omni3d_extraction(self, prediction: str) -> Optional[str]:
-        """Omni3DBench structured extraction using <ans></ans> tags."""
-        # Tag-based extraction
-        if '<ans>' in prediction and '</ans>' in prediction:
-            try:
-                start = prediction.find('<ans>') + 5
-                end = prediction.find('</ans>')
-                return prediction[start:end].strip()
-            except:
-                pass
-        
-        # Fallback pattern extraction
-        pred_lower = prediction.lower()
-        
-        # Yes/no detection
-        yes_patterns = ['yes', 'true', 'correct']
-        no_patterns = ['no', 'false', 'incorrect']
-        
-        for pattern in yes_patterns:
-            if pattern in pred_lower:
-                return 'yes'
-        
-        for pattern in no_patterns:
-            if pattern in pred_lower:
-                return 'no'
-        
-        # Number extraction
-        numbers = re.findall(r'-?\d+\.?\d*', prediction)
-        if numbers:
-            return numbers[0]
-        
-        return None
-    
-    def _olympiad_math_extraction(self, prediction: str) -> Optional[str]:
-        """OlympiadBench mathematical extraction with boxed content."""
-        # Extract \\boxed{} content
-        boxed_pattern = r'\\boxed{([^{}]*(?:{[^{}]*}[^{}]*)*)}'
-        matches = re.findall(boxed_pattern, prediction)
-        if matches:
-            return matches[-1].strip()  # Return last match
-        
-        # Extract $...$ content
-        dollar_pattern = r'\$([^$]+)\$'
-        dollar_matches = re.findall(dollar_pattern, prediction)
-        if dollar_matches:
-            return dollar_matches[-1].strip()
-        
-        # "So the final answer is..." pattern
-        final_answer_patterns = [
-            r'So the final answer is\s*([^.]+)',
-            r'Therefore,?\s*the answer is\s*([^.]+)',
-            r'The answer is\s*([^.]+)'
+    def _extract_natural_language_answers(self, prediction: str) -> Optional[str]:
+        """Extract answers from natural language patterns."""
+        # Common answer introduction patterns
+        patterns = [
+            r'So the final answer is\s*([^.\n]+)',
+            r'Therefore,?\s*the answer is\s*([^.\n]+)',
+            r'The answer is\s*([^.\n]+)',
+            r'Answer:\s*([^\n]+)',
+            r'Final Answer:\s*([^\n]+)',
+            r'Solution:\s*([^\n]+)',
+            r'Result:\s*([^\n]+)',
         ]
         
-        for pattern in final_answer_patterns:
+        for pattern in patterns:
             match = re.search(pattern, prediction, re.IGNORECASE)
             if match:
                 return match.group(1).strip()
         
         return None
     
-    def _atomic_physics_extraction(self, prediction: str) -> Optional[str]:
-        """Atomic dataset physics extraction with complex boxed content."""
-        # Complex boxed extraction with nested brackets
-        def extract_boxed_content(text):
-            boxed_matches = re.finditer(r'\\boxed{', text)
-            results = []
-            
-            for match in boxed_matches:
-                start_index = match.end()
-                end_index = start_index
-                stack = 1
-                
-                while stack > 0 and end_index < len(text):
-                    if text[end_index] == '{':
-                        stack += 1
-                    elif text[end_index] == '}':
-                        stack -= 1
-                    end_index += 1
-                
-                if stack == 0:
-                    content = text[start_index:end_index - 1]
-                    results.append(content)
-            
-            return results
+    def _extract_boolean_answers(self, prediction: str) -> Optional[str]:
+        """Extract boolean/yes-no style answers."""
+        pred_lower = prediction.lower()
         
-        boxed_content = extract_boxed_content(prediction)
-        if boxed_content:
-            return boxed_content[-1].strip()
+        # Yes patterns
+        yes_patterns = ['yes', 'true', 'correct', 'right']
+        no_patterns = ['no', 'false', 'incorrect', 'wrong']
+        
+        # Count occurrences to handle cases like "not true"
+        yes_count = sum(1 for pattern in yes_patterns if pattern in pred_lower)
+        no_count = sum(1 for pattern in no_patterns if pattern in pred_lower)
+        
+        if yes_count > no_count and yes_count > 0:
+            return 'yes'
+        elif no_count > yes_count and no_count > 0:
+            return 'no'
         
         return None
     
-    def _sympy_equivalence_check(self, prediction: str, answer: str) -> Optional[str]:
-        """SymPy mathematical equivalence checking."""
+    def _extract_numeric_answers(self, prediction: str) -> Optional[str]:
+        """Extract numeric answers from text."""
+        # Look for numbers (integers and decimals)
+        number_patterns = [
+            r'-?\d+\.\d+',  # Decimals first (more specific)
+            r'-?\d+',       # Integers
+        ]
+        
+        for pattern in number_patterns:
+            matches = re.findall(pattern, prediction)
+            if matches:
+                return matches[-1]  # Return last number found
+        
+        return None
+    
+    def _check_mathematical_equivalence(self, prediction: str, answer: str) -> Optional[str]:
+        """Check mathematical equivalence using SymPy."""
         if not SYMPY_AVAILABLE:
+            self.logger.warning("SymPy not available - mathematical equivalence checking disabled. Install with: pip install sympy")
             return None
             
         try:
@@ -596,58 +645,6 @@ class VMCBenchScorer:
                 
         except Exception:
             pass
-        
-        return None
-    
-    def _latex_expression_parsing(self, prediction: str) -> Optional[str]:
-        """LaTeX expression parsing and normalization."""
-        if not SYMPY_AVAILABLE:
-            return None
-            
-        try:
-            # Try to parse LaTeX with SymPy
-            expr = parse_latex(prediction)
-            return str(expr)
-        except Exception:
-            pass
-        
-        return None
-    
-    def _structured_tag_extraction(self, prediction: str) -> Optional[str]:
-        """Generalized structured tag extraction."""
-        # Common tag patterns
-        tag_patterns = [
-            r'<answer>(.*?)</answer>',
-            r'<result>(.*?)</result>',
-            r'<final>(.*?)</final>',
-            r'\[ANSWER\](.*?)\[/ANSWER\]',
-            r'Answer:\s*([^\n]+)',
-            r'Final Answer:\s*([^\n]+)'
-        ]
-        
-        for pattern in tag_patterns:
-            match = re.search(pattern, prediction, re.IGNORECASE | re.DOTALL)
-            if match:
-                return match.group(1).strip()
-        
-        return None
-    
-    def _pattern_based_extraction(self, prediction: str) -> Optional[str]:
-        """Pattern-based extraction with common answer formats."""
-        # Common answer patterns
-        patterns = [
-            r'(?:^|\s)([A-I])(?:\s|$|\.|,)',  # Single letter choices
-            r'(?:is|are)\s+([A-I])(?:\s|$|\.|,)',  # "The answer is A"
-            r'(?:option|choice)\s+([A-I])(?:\s|$|\.|,)',  # "Option A"
-            r'([A-I])\s*(?:is|are)\s*(?:correct|right)',  # "A is correct"
-            r'(\d+(?:\.\d+)?)',  # Numbers
-            r'(true|false|yes|no)'  # Boolean answers
-        ]
-        
-        for pattern in patterns:
-            matches = re.findall(pattern, prediction, re.IGNORECASE)
-            if matches:
-                return matches[0].strip()
         
         return None
 
@@ -775,6 +772,17 @@ class VMCBenchScorer:
             percentage = count / total_rows * 100 if total_rows > 0 else 0
             print(f"  {stage}: {count} ({percentage:.1f}%)")
     
+    def _save_summary_to_file(self, summary_lines: List[str]):
+        """Save summary statistics to a text file."""
+        summary_path = self.output_dir / "vmcbench_scoring_summary.txt"
+        
+        try:
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                f.write("\n".join(summary_lines))
+            self.logger.info(f"Saved summary statistics to: {summary_path}")
+        except Exception as e:
+            self.logger.error(f"Error saving summary file: {e}")
+    
     def process_all(self):
         """Process all benchmarks."""
         found_files = self.find_benchmark_files()
@@ -783,25 +791,133 @@ class VMCBenchScorer:
             self.logger.error("No benchmark files found!")
             return
         
+        # Track overall statistics across all benchmarks
+        all_benchmark_stats = []
+        summary_lines = []
+        
+        # Add header to summary
+        import time
+        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        summary_lines.extend([
+            "VMCBench Standalone Scorer - Results Summary",
+            f"Generated: {timestamp}",
+            f"Benchmarks processed: {', '.join(self.benchmarks)}",
+            f"LLM Backend: {self.llm_judge.__class__.__name__ if hasattr(self, 'llm_judge') else 'N/A'}",
+            f"Resume mode: {'Enabled' if self.resume else 'Disabled'}",
+            f"Max samples: {self.max_samples if self.max_samples else 'No limit'}",
+            "=" * 60,
+            ""
+        ])
+        
         for benchmark_name, file_path in found_files.items():
             try:
+                # Load the results to get final statistics
+                output_path = self.output_dir / f"{file_path.stem}_scored.xlsx"
+                
                 self.process_benchmark(benchmark_name, file_path)
+                
+                # Read the results file to get final stats
+                if output_path.exists():
+                    results_df = pd.read_excel(output_path)
+                    total_rows = len(results_df)
+                    hits = results_df['hit'].sum() if 'hit' in results_df.columns else 0
+                    accuracy = hits / total_rows if total_rows > 0 else 0
+                    
+                    # Store stats for overall summary
+                    all_benchmark_stats.append({
+                        'benchmark': benchmark_name,
+                        'total': total_rows,
+                        'hits': hits,
+                        'accuracy': accuracy
+                    })
+                    
+                    # Add to summary text
+                    summary_lines.extend([
+                        f"=== {benchmark_name} ===",
+                        f"Total samples: {total_rows}",
+                        f"Correct answers: {hits}",
+                        f"Accuracy: {accuracy:.3f} ({accuracy*100:.1f}%)",
+                        ""
+                    ])
+                    
+                    # Add stage breakdown if available
+                    stage_cols = ['stage1_match', 'stage2_match', 'stage3_match', 'stage4_match']
+                    if all(col in results_df.columns for col in stage_cols):
+                        stage_stats = {
+                            'Stage 1 (Simple)': results_df['stage1_match'].sum(),
+                            'Stage 2 (Complex)': results_df['stage2_match'].sum(),
+                            'Stage 3 (LLM)': results_df['stage3_match'].sum(),
+                            'Stage 4 (Fallback)': results_df['stage4_match'].sum()
+                        }
+                        
+                        summary_lines.append("Stage success breakdown:")
+                        for stage, count in stage_stats.items():
+                            percentage = count / total_rows * 100 if total_rows > 0 else 0
+                            summary_lines.append(f"  {stage}: {count} ({percentage:.1f}%)")
+                        summary_lines.append("")
+                
             except Exception as e:
                 self.logger.error(f"Error processing {benchmark_name}: {e}")
+                summary_lines.extend([
+                    f"=== {benchmark_name} (ERROR) ===",
+                    f"Error: {str(e)}",
+                    ""
+                ])
                 continue
         
-        print(f"\n=== Processing Complete ===")
-        print(f"Processed {len(found_files)} benchmarks")
-        print(f"Output directory: {self.output_dir}")
+        # Calculate and display overall statistics
+        if all_benchmark_stats:
+            total_samples = sum(stat['total'] for stat in all_benchmark_stats)
+            total_hits = sum(stat['hits'] for stat in all_benchmark_stats)
+            overall_accuracy = total_hits / total_samples if total_samples > 0 else 0
+            
+            overall_summary = [
+                "=" * 60,
+                "OVERALL SUMMARY",
+                "=" * 60,
+                f"Total benchmarks: {len(all_benchmark_stats)}",
+                f"Total samples: {total_samples}",
+                f"Total correct: {total_hits}",
+                f"Overall accuracy: {overall_accuracy:.3f} ({overall_accuracy*100:.1f}%)",
+                "",
+                "Per-benchmark breakdown:"
+            ]
+            
+            for stat in all_benchmark_stats:
+                overall_summary.append(
+                    f"  {stat['benchmark']}: {stat['hits']}/{stat['total']} = {stat['accuracy']:.3f} ({stat['accuracy']*100:.1f}%)"
+                )
+            
+            summary_lines.extend(overall_summary)
+            
+            # Print overall summary to console
+            print("\n" + "\n".join(overall_summary))
+        
+        # Final completion message
+        completion_msg = [
+            "",
+            "=" * 60,
+            "PROCESSING COMPLETE",
+            "=" * 60,
+            f"Processed {len(found_files)} benchmarks",
+            f"Output directory: {self.output_dir}",
+            f"Summary saved to: {self.output_dir / 'vmcbench_scoring_summary.txt'}"
+        ]
+        
+        summary_lines.extend(completion_msg)
+        print("\n" + "\n".join(completion_msg))
+        
+        # Save summary to file
+        self._save_summary_to_file(summary_lines)
 
 
 class LLMEquivalenceJudge:
     """Base class for LLM equivalence judges."""
     
-    SYSTEM_PROMPT = "You are an assistant that compares responses for semantic equivalence."
+    SYSTEM_PROMPT = "You are an assistant that compares responses for semantic or mathematical equivalence."
     
     USER_PROMPT_TEMPLATE = """
-Compare the following two responses and determine if they are semantically equivalent.
+Compare the following model response to the ground truth answer. Extract the model's actual answer from its response, and then determine if the extracted answer is semantically or mathematically equivalent to the ground truth. Condition your choice of equivalence checking on the contents of the prompt, whether mathematical or semantic. Model predictions may contain extensive internal chains of thought or may enclose the answer in special containers such as "/boxed{}", <ans></ans>, etc.
 
 Response 1 (Model): {prediction}
 Response 2 (Ground Truth): {answer}
@@ -841,9 +957,9 @@ class OpenAIJudge(LLMEquivalenceJudge):
     def judge_equivalence(self, prediction: str, answer: str) -> Tuple[str, bool, str]:
         """Judge equivalence using OpenAI API."""
         try:
-            user_prompt = self.USER_PROMPT_TEMPLATE.format(
-                prediction=prediction, answer=answer
-            )
+            # Safely format the prompt by replacing placeholders
+            user_prompt = self.USER_PROMPT_TEMPLATE.replace("{prediction}", str(prediction))
+            user_prompt = user_prompt.replace("{answer}", str(answer))
             
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -889,9 +1005,9 @@ class AnthropicJudge(LLMEquivalenceJudge):
     def judge_equivalence(self, prediction: str, answer: str) -> Tuple[str, bool, str]:
         """Judge equivalence using Anthropic API."""
         try:
-            user_prompt = self.USER_PROMPT_TEMPLATE.format(
-                prediction=prediction, answer=answer
-            )
+            # Safely format the prompt by replacing placeholders
+            user_prompt = self.USER_PROMPT_TEMPLATE.replace("{prediction}", str(prediction))
+            user_prompt = user_prompt.replace("{answer}", str(answer))
             
             response = self.client.messages.create(
                 model=self.model,
