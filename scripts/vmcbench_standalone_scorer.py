@@ -207,7 +207,7 @@ class VMCBenchScorer:
             Dictionary mapping choice letters to choice text
         """
         choices = {}
-        for i in range(9):  # Support up to 9 choices (A-I)
+        for i in range(9):  # Support up to 9 choices (A-Z)
             choice_letter = chr(65 + i)  # A, B, C, D, ...
             if choice_letter in row and pd.notna(row[choice_letter]):
                 choices[choice_letter] = str(row[choice_letter])
@@ -634,13 +634,15 @@ class VMCBenchScorer:
         if not choices_dict:
             # Generic MCQ extraction without specific choices (enhanced with Stage 1 patterns)
             mcq_patterns = [
-                r'\b([A-I])\b',  # Isolated single letter (merged from Stage 1)
-                r'(?:^|\s)([A-I])(?:\s|$|\.|,)',  # Single letter with boundaries
-                r'(?:is|are)\s+([A-I])(?:\s|$|\.|,)',  # "The answer is A"
-                r'(?:option|choice)\s+([A-I])(?:\s|$|\.|,)',  # "Option A"
-                r'([A-I])\s*(?:is|are)\s*(?:correct|right)',  # "A is correct"
-                r'\(([A-I])\)',  # (A)
-                r'([A-I])\.',    # A.
+                r'\b([A-Z])\b',  # Isolated single letter (merged from Stage 1)
+                r'(?:^|\s)([A-Z])(?:\s|$|\.|,)',  # Single letter with boundaries
+                r'(?:is|are)\s+([A-Z])(?:\s|$|\.|,)',  # "The answer is A"
+                r'(?:option|choice)\s+([A-Z])(?:\s|$|\.|,)',  # "Option A"
+                r'([A-Z])\s*(?:is|are)\s*(?:correct|right)',  # "A is correct"
+                r'\(([A-Z])\)',  # (A)
+                r'([A-Z])\.',    # A.
+                r'^([A-Z])\.\s',  # B. (at start of string/line)
+                r'\n([A-Z])\.\s',  # B. (at start of new line)
             ]
             
             for pattern in mcq_patterns:
@@ -653,9 +655,15 @@ class VMCBenchScorer:
             response = str(prediction)
             all_choices = list(choices_dict.keys())
             
-            # Pattern 1: Bracketed options (A), (B) or A., B.
+            # Pattern 1: Bracketed options (A), (B) and formatted choices A., B. 
             for choice in all_choices:
-                for pattern in [f'\\({choice}\\)', f'{choice}\\.\\s']:
+                patterns = [
+                    f'\\({choice}\\)',      # (A)
+                    f'{choice}\\.\\s',      # A. (anywhere)
+                    f'^{choice}\\.\\s',     # A. (at start of string)
+                    f'\\n{choice}\\.\\s',    # A. (at start of line)
+                ]
+                for pattern in patterns:
                     for match in re.finditer(pattern, response):
                         matches.append((choice, match.start(), match.end()))
             
@@ -678,12 +686,12 @@ class VMCBenchScorer:
         if not choices_dict:
             # Generic MCQ extraction without specific choices
             mcq_patterns = [
-                r'(?:^|\s)([A-I])(?:\s|$|\.|,)',  # Single letter
-                r'(?:is|are)\s+([A-I])(?:\s|$|\.|,)',  # "The answer is A"
-                r'(?:option|choice)\s+([A-I])(?:\s|$|\.|,)',  # "Option A"
-                r'([A-I])\s*(?:is|are)\s*(?:correct|right)',  # "A is correct"
-                r'\(([A-I])\)',  # (A)
-                r'([A-I])\.',    # A.
+                r'(?:^|\s)([A-Z])(?:\s|$|\.|,)',  # Single letter
+                r'(?:is|are)\s+([A-Z])(?:\s|$|\.|,)',  # "The answer is A"
+                r'(?:option|choice)\s+([A-Z])(?:\s|$|\.|,)',  # "Option A"
+                r'([A-Z])\s*(?:is|are)\s*(?:correct|right)',  # "A is correct"
+                r'\(([A-Z])\)',  # (A)
+                r'([A-Z])\.',    # A.
             ]
             
             for pattern in mcq_patterns:

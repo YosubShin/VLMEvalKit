@@ -508,7 +508,7 @@ Step 1: Choice Building
 ├─ Input: item with A, B, C, D columns + prediction
 ├─ Function: build_choices()
 ├─ Process:
-│  ├─ Scan columns A-I for non-null values
+│  ├─ Scan columns A-Z for non-null values
 │  ├─ Build mapping: {"A": "choice_text_A", "B": "choice_text_B", ...}
 │  └─ Create index2ans for content matching
 └─ Output: choices dict + all_choices list
