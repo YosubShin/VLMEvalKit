@@ -418,6 +418,17 @@ class VMCBenchScorer:
                         last_match = max(matches, key=lambda x: x[1])  # max by start_pos
                         content = last_match[0]
                         if content and content.strip() != prediction.strip():
+                            # Strict length-based heuristic: require exact length match for structured extraction
+                            # This prevents structured tag extraction from returning full explanations instead of short answers
+                            gt_len = len(answer.strip())
+                            content_len = len(content.strip())
+                            
+                            # Apply strict length filter for structured extraction strategies
+                            if strategy_name in ["Structured Tags", "Math Expressions"]:
+                                # Require exact length match - if lengths don't match, reject this extraction
+                                if content_len != gt_len:
+                                    continue  # Skip this match, try next strategy
+                            
                             selected_result = content.strip()
                             selected_strategy = strategy_name
                             
@@ -440,7 +451,7 @@ class VMCBenchScorer:
                 match_details.append(f"{strategy}: {error}")
             
             # Add heuristic info to report
-            heuristic_info = f"GT_len={len(answer.strip())}, MCQ/Bool={'enabled' if len(answer.strip()) < 15 else 'disabled'}"
+            heuristic_info = f"GT_len={len(answer.strip())}, MCQ/Bool={'enabled' if len(answer.strip()) < 15 else 'disabled'}, Strict_length_filter=enabled"
             match_report = f"Matches found: {'; '.join(match_details)} | Heuristics: {heuristic_info}"
             
             if selected_result:
@@ -452,7 +463,7 @@ class VMCBenchScorer:
             else:
                 return prediction, False, f"NO VALID EXTRACTION | {match_report}"
         else:
-            heuristic_info = f"GT_len={len(answer.strip())}, MCQ/Bool={'enabled' if len(answer.strip()) < 15 else 'disabled'}"
+            heuristic_info = f"GT_len={len(answer.strip())}, MCQ/Bool={'enabled' if len(answer.strip()) < 15 else 'disabled'}, Strict_length_filter=enabled"
             return prediction, False, f"No matches found across all strategies | Heuristics: {heuristic_info}"
     
     def stage3_llm_judge(self, prediction: str, answer: str) -> Tuple[str, bool, str]:
