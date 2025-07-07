@@ -54,7 +54,7 @@ except ImportError:
     ANTHROPIC_AVAILABLE = False
 
 
-class VMCBenchScorer:
+class VLMEvalKitScorer:
     """
     Main scorer class that implements the 4-stage answer matching pipeline.
     """
@@ -136,7 +136,7 @@ class VMCBenchScorer:
         for benchmark in self.benchmarks:
             # Pattern: {model_name}_{benchmark_name}.xlsx
             pattern = f"*_{benchmark}.xlsx"
-            matches = list(self.input_dir.glob(pattern))
+            matches = [f for f in self.input_dir.glob(pattern) if not f.name.startswith('~$')]
             
             if matches:
                 if len(matches) > 1:
@@ -163,6 +163,25 @@ class VMCBenchScorer:
         try:
             df = pd.read_excel(file_path)
             self.logger.info(f"Loaded {len(df)} rows from {file_path}")
+            
+            # Handle OlympiadBench-style data with final_answer column
+            if 'answer' not in df.columns and 'final_answer' in df.columns:
+                print(f"\nWarning: 'answer' column not detected but 'final_answer' column found.")
+                print(f"Assuming this is OlympiadBench or similar benchmark with list-wrapped answers.")
+                print(f"Converting 'final_answer' to 'answer' by removing list wrapper ['...']")
+                
+                # Create answer column by extracting from final_answer
+                df['answer'] = df['final_answer'].apply(lambda x: str(x)[2:-2] if isinstance(x, str) and len(str(x)) > 4 else str(x))
+                
+                # Handle multiple answers - drop for now
+                if 'is_multiple_answer' in df.columns:
+                    multi_answer_mask = df['is_multiple_answer'] == 1.0
+                    num_multi = multi_answer_mask.sum()
+                    if num_multi > 0:
+                        print(f"\nWarning: Found {num_multi} rows with is_multiple_answer=True.")
+                        print(f"Dropping these rows from evaluation as multiple answer handling is not yet supported.")
+                        df = df[~multi_answer_mask].reset_index(drop=True)
+                        self.logger.info(f"Dropped {num_multi} multiple answer rows, {len(df)} rows remaining")
             
             # Validate required columns
             required_cols = ['answer', 'prediction']
@@ -314,6 +333,9 @@ class VMCBenchScorer:
             df_scored.to_excel(output_path, index=False)
             self.logger.info(f"Saved scored results to: {output_path}")
         
+        # Clean up intermediate files
+        self._cleanup_intermediate_files()
+        
         # Print summary statistics
         self._print_summary_stats(df_scored, benchmark_name)
     
@@ -424,7 +446,16 @@ class VMCBenchScorer:
                             content_len = len(content.strip())
                             
                             # Apply strict length filter for structured extraction strategies
-                            if strategy_name in ["Structured Tags", "Math Expressions", "Natural Language"]:
+                            # Exception: If content can be converted to float, bypass length filter (for numeric answers)
+                            can_convert_to_float = False
+                            try:
+                                float(content.strip())
+                                can_convert_to_float = True
+                            except (ValueError, TypeError):
+                                pass
+                            
+                            if (strategy_name in ["Structured Tags", "Math Expressions", "Natural Language", "Boolean Answers"] 
+                                and not can_convert_to_float):
                                 # Require exact length match - if lengths don't match, reject this extraction
                                 if content_len != gt_len:
                                     continue  # Skip this match, try next strategy
@@ -1027,6 +1058,10 @@ class VMCBenchScorer:
             row_result['stage_errors'] = " | ".join(errors)
             
             results.append(row_result)
+            
+            # Save intermediate results every 100 rows
+            if (idx + 1) % 100 == 0:
+                self._save_intermediate_results(df, results, idx + 1)
         
         # Combine original data with results
         results_df = pd.DataFrame(results)
@@ -1139,6 +1174,54 @@ class VMCBenchScorer:
         for stage, count in stage_stats.items():
             percentage = count / total_rows * 100 if total_rows > 0 else 0
             print(f"  {stage}: {count} ({percentage:.1f}%)")
+    
+    def _save_intermediate_results(self, df: pd.DataFrame, results: List[Dict], processed_count: int):
+        """
+        Save intermediate results to a temporary file every 100 rows.
+        
+        Args:
+            df: Original DataFrame
+            results: List of processed results so far
+            processed_count: Number of rows processed
+        """
+        try:
+            # Create a partial results DataFrame
+            partial_df = df.iloc[:processed_count].copy()
+            partial_results_df = pd.DataFrame(results)
+            combined_df = pd.concat([partial_df, partial_results_df], axis=1)
+            
+            # Save to temporary file with processed count in filename
+            temp_filename = f"intermediate_results_{processed_count}_rows.xlsx"
+            temp_path = self.output_dir / temp_filename
+            
+            combined_df.to_excel(temp_path, index=False)
+            
+            # Calculate intermediate statistics
+            hits = combined_df['hit'].sum() if 'hit' in combined_df.columns else 0
+            accuracy = hits / processed_count if processed_count > 0 else 0
+            
+            self.logger.info(f"Saved intermediate results: {processed_count} rows processed, {hits} hits, {accuracy:.3f} accuracy -> {temp_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Error saving intermediate results: {e}")
+    
+    def _cleanup_intermediate_files(self):
+        """Clean up intermediate result files after processing is complete."""
+        try:
+            # Find all intermediate result files
+            intermediate_files = list(self.output_dir.glob("intermediate_results_*_rows.xlsx"))
+            
+            if intermediate_files:
+                self.logger.info(f"Cleaning up {len(intermediate_files)} intermediate files...")
+                for file_path in intermediate_files:
+                    try:
+                        file_path.unlink()
+                        self.logger.debug(f"Deleted intermediate file: {file_path}")
+                    except Exception as e:
+                        self.logger.error(f"Error deleting intermediate file {file_path}: {e}")
+                        
+        except Exception as e:
+            self.logger.error(f"Error during intermediate file cleanup: {e}")
     
     def _save_summary_to_file(self, summary_lines: List[str]):
         """Save summary statistics to a text file."""
@@ -1545,7 +1628,7 @@ Examples:
     args = parser.parse_args()
     
     # Initialize and run scorer
-    scorer = VMCBenchScorer(
+    scorer = VLMEvalKitScorer(
         benchmarks=args.benchmarks,
         input_dir=args.input_dir,
         output_dir=args.output_dir,
