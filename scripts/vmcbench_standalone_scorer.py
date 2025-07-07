@@ -397,9 +397,14 @@ class VMCBenchScorer:
     def stage2_complex_match(self, prediction: str, answer: str, 
                            choices_dict: Optional[Dict[str, str]] = None) -> Tuple[str, bool, str]:
         """
-        Stage 2: Unified complex extraction strategies.
+        Stage 2: Unified complex extraction strategies with comprehensive match collection.
         
-        Applies generalized extraction patterns that work across all benchmark types.
+        Behavior:
+        - Searches from END of response to prioritize final answers over intermediate work
+        - Collects ALL matches from ALL strategies for full visibility
+        - Uses priority order for final selection: LaTeX > Math > Tags > MCQ > Language > Boolean > Numeric > SymPy
+        - Returns first successful match but reports all findings in error message
+        - Includes match positions in text for debugging
         
         Args:
             prediction: Model's prediction
@@ -407,33 +412,69 @@ class VMCBenchScorer:
             choices_dict: Dictionary of multiple choice options (optional)
             
         Returns:
-            Tuple of (extracted_answer, success, error_message)
+            Tuple of (extracted_answer, success, detailed_match_report)
         """
         strategies = [
-            ("LaTeX Boxed", lambda: self._extract_latex_boxed(prediction)),
-            ("Math Expressions", lambda: self._extract_math_expressions(prediction)),
-            ("Structured Tags", lambda: self._extract_structured_tags(prediction)),
-            ("Multiple Choice", lambda: self._extract_multiple_choice(prediction, choices_dict)),
-            ("Natural Language", lambda: self._extract_natural_language_answers(prediction)),
-            ("Boolean Answers", lambda: self._extract_boolean_answers(prediction)),
-            ("Numeric Answers", lambda: self._extract_numeric_answers(prediction)),
-            ("SymPy Equivalence", lambda: self._check_mathematical_equivalence(prediction, answer))
+            ("LaTeX Boxed", lambda: self._extract_latex_boxed_with_positions(prediction)),
+            ("Math Expressions", lambda: self._extract_math_expressions_with_positions(prediction)),
+            ("Structured Tags", lambda: self._extract_structured_tags_with_positions(prediction)),
+            ("Multiple Choice", lambda: self._extract_multiple_choice_with_positions(prediction, choices_dict)),
+            ("Natural Language", lambda: self._extract_natural_language_with_positions(prediction)),
+            ("Boolean Answers", lambda: self._extract_boolean_answers_with_positions(prediction)),
+            ("Numeric Answers", lambda: self._extract_numeric_answers_with_positions(prediction)),
+            ("SymPy Equivalence", lambda: self._check_mathematical_equivalence_with_positions(prediction, answer))
         ]
         
+        all_matches = []
+        selected_result = None
+        selected_strategy = None
+        
+        # Collect all matches from all strategies
         for strategy_name, strategy_func in strategies:
             try:
-                result = strategy_func()
-                if result and result != prediction:  # Found something useful
-                    # Check if result matches answer
-                    if result.lower().strip() == answer.lower().strip():
-                        return answer, True, f"Success with {strategy_name}: {result}"
-                    # Even if not exact match, return the extracted result
-                    elif len(result.strip()) > 0:
-                        return result, True, f"Extracted with {strategy_name}: {result}"
+                matches = strategy_func()
+                if matches:  # matches is now a list of (content, start_pos, end_pos) tuples
+                    all_matches.extend([(strategy_name, content, start_pos, end_pos) for content, start_pos, end_pos in matches])
+                    
+                    # Select first valid result using priority order (if not already selected)
+                    if not selected_result:
+                        # Get the last (rightmost) match from this strategy
+                        last_match = max(matches, key=lambda x: x[1])  # max by start_pos
+                        content = last_match[0]
+                        if content and content.strip() != prediction.strip():
+                            selected_result = content.strip()
+                            selected_strategy = strategy_name
+                            
             except Exception as e:
-                continue  # Try next strategy
+                all_matches.append((strategy_name, f"ERROR: {str(e)}", -1, -1))
+                continue
         
-        return prediction, False, "All complex strategies failed"
+        # Build comprehensive match report
+        if all_matches:
+            # Sort matches by position (rightmost first for "end-searching" perspective)
+            position_sorted = sorted([m for m in all_matches if m[2] >= 0], key=lambda x: x[2], reverse=True)
+            error_matches = [m for m in all_matches if m[2] == -1]
+            
+            match_details = []
+            for strategy, content, start, end in position_sorted:
+                if start >= 0:
+                    match_details.append(f"{strategy}@{start}-{end}: '{content}'")
+            
+            for strategy, error, _, _ in error_matches:
+                match_details.append(f"{strategy}: {error}")
+            
+            match_report = f"Matches found: {'; '.join(match_details)}"
+            
+            if selected_result:
+                # Check if selected result matches ground truth
+                if selected_result.lower() == answer.lower():
+                    return answer, True, f"SUCCESS with {selected_strategy}: '{selected_result}' | {match_report}"
+                else:
+                    return selected_result, True, f"EXTRACTED with {selected_strategy}: '{selected_result}' | {match_report}"
+            else:
+                return prediction, False, f"NO VALID EXTRACTION | {match_report}"
+        else:
+            return prediction, False, "No matches found across all strategies"
     
     def stage3_llm_judge(self, prediction: str, answer: str) -> Tuple[str, bool, str]:
         """
@@ -450,7 +491,38 @@ class VMCBenchScorer:
         """
         return self.llm_judge.judge_equivalence(prediction, answer)
     
-    # Unified extraction methods for Stage 2
+    # Unified extraction methods for Stage 2 with position tracking
+    def _extract_latex_boxed_with_positions(self, prediction: str) -> List[Tuple[str, int, int]]:
+        """Extract content from LaTeX \boxed{} format with positions."""
+        matches = []
+        
+        # Method 1: Complex nested bracket parsing (most robust)
+        for match in re.finditer(r'\\boxed{', prediction):
+            start_index = match.end()
+            end_index = start_index
+            stack = 1
+            
+            while stack > 0 and end_index < len(prediction):
+                if prediction[end_index] == '{':
+                    stack += 1
+                elif prediction[end_index] == '}':
+                    stack -= 1
+                end_index += 1
+            
+            if stack == 0:
+                content = prediction[start_index:end_index - 1].strip()
+                if content:
+                    matches.append((content, match.start(), end_index))
+        
+        # Method 2: Simple regex fallback for basic cases (if no complex matches found)
+        if not matches:
+            for match in re.finditer(r'\\boxed{([^{}]*(?:{[^{}]*}[^{}]*)*)}', prediction):
+                content = match.group(1).strip()
+                if content:
+                    matches.append((content, match.start(), match.end()))
+        
+        return matches
+    
     def _extract_latex_boxed(self, prediction: str) -> Optional[str]:
         """Extract content from LaTeX \boxed{} format with nested bracket support."""
         # Method 1: Complex nested bracket parsing (most robust)
@@ -482,7 +554,33 @@ class VMCBenchScorer:
         if matches:
             return matches[-1].strip()
         
-        return None
+        # Backward compatibility - return last match
+        matches = self._extract_latex_boxed_with_positions(prediction)
+        return matches[-1][0] if matches else None
+    
+    def _extract_math_expressions_with_positions(self, prediction: str) -> List[Tuple[str, int, int]]:
+        """Extract mathematical expressions with positions."""
+        matches = []
+        
+        # Dollar-wrapped math: $expression$
+        for match in re.finditer(r'\$([^$]+)\$', prediction):
+            content = match.group(1).strip()
+            if content:
+                matches.append((content, match.start(), match.end()))
+        
+        # LaTeX expressions without \boxed (only if SymPy available)
+        if SYMPY_AVAILABLE:
+            try:
+                from sympy.parsing.latex import parse_latex
+                # Try to parse the whole prediction as LaTeX
+                expr = parse_latex(prediction)
+                expr_str = str(expr)
+                if expr_str != prediction:
+                    matches.append((expr_str, 0, len(prediction)))
+            except Exception:
+                pass
+        
+        return matches
     
     def _extract_math_expressions(self, prediction: str) -> Optional[str]:
         """Extract mathematical expressions from various formats."""
@@ -503,7 +601,31 @@ class VMCBenchScorer:
         else:
             self.logger.warning("SymPy not available - LaTeX expression parsing disabled. Install with: pip install sympy")
         
-        return None
+        # Backward compatibility - return last match
+        matches = self._extract_math_expressions_with_positions(prediction)
+        return matches[-1][0] if matches else None
+    
+    def _extract_structured_tags_with_positions(self, prediction: str) -> List[Tuple[str, int, int]]:
+        """Extract content from structured tags with positions."""
+        matches = []
+        
+        # XML-style tags
+        tag_patterns = [
+            r'<ans>(.*?)</ans>',           # Omni3D format
+            r'<answer>(.*?)</answer>',     # Generic answer tags
+            r'<result>(.*?)</result>',     # Result tags
+            r'<final>(.*?)</final>',       # Final answer tags
+            r'\[ANSWER\](.*?)\[/ANSWER\]', # Bracket format
+            r'\[ANS\](.*?)\[/ANS\]',       # Alternative bracket
+        ]
+        
+        for pattern in tag_patterns:
+            for match in re.finditer(pattern, prediction, re.IGNORECASE | re.DOTALL):
+                content = match.group(1).strip()
+                if content:
+                    matches.append((content, match.start(), match.end()))
+        
+        return matches
     
     def _extract_structured_tags(self, prediction: str) -> Optional[str]:
         """Extract content from structured XML-style tags and brackets."""
@@ -522,7 +644,54 @@ class VMCBenchScorer:
             if match:
                 return match.group(1).strip()
         
-        return None
+        # Backward compatibility - return last match
+        matches = self._extract_structured_tags_with_positions(prediction)
+        return matches[-1][0] if matches else None
+    
+    def _extract_multiple_choice_with_positions(self, prediction: str, choices_dict: Optional[Dict[str, str]]) -> List[Tuple[str, int, int]]:
+        """Extract multiple choice answers with positions."""
+        matches = []
+        
+        if not choices_dict:
+            # Generic MCQ extraction without specific choices
+            mcq_patterns = [
+                r'(?:^|\s)([A-I])(?:\s|$|\.|,)',  # Single letter
+                r'(?:is|are)\s+([A-I])(?:\s|$|\.|,)',  # "The answer is A"
+                r'(?:option|choice)\s+([A-I])(?:\s|$|\.|,)',  # "Option A"
+                r'([A-I])\s*(?:is|are)\s*(?:correct|right)',  # "A is correct"
+                r'\(([A-I])\)',  # (A)
+                r'([A-I])\.',    # A.
+            ]
+            
+            for pattern in mcq_patterns:
+                for match in re.finditer(pattern, prediction, re.IGNORECASE):
+                    content = match.group(1).upper().strip()
+                    if content:
+                        matches.append((content, match.start(), match.end()))
+        else:
+            # Specific choice-based extraction
+            response = str(prediction)
+            all_choices = list(choices_dict.keys())
+            
+            # Pattern 1: Bracketed options (A), (B) or A., B.
+            for choice in all_choices:
+                for pattern in [f'\\({choice}\\)', f'{choice}\\.\\s']:
+                    for match in re.finditer(pattern, response):
+                        matches.append((choice, match.start(), match.end()))
+            
+            # Pattern 2: Standalone letters
+            for choice in all_choices:
+                for match in re.finditer(f'\\s{choice}\\s', response):
+                    matches.append((choice, match.start(), match.end()))
+            
+            # Pattern 3: Content matching (assign position as end of prediction)
+            for choice, choice_text in choices_dict.items():
+                if choice_text.lower() in response.lower():
+                    pos = response.lower().find(choice_text.lower())
+                    if pos >= 0:
+                        matches.append((choice, pos, pos + len(choice_text)))
+        
+        return matches
     
     def _extract_multiple_choice(self, prediction: str, choices_dict: Optional[Dict[str, str]]) -> Optional[str]:
         """Extract multiple choice answers (A, B, C, D, etc.)."""
@@ -571,7 +740,32 @@ class VMCBenchScorer:
                 if choice_text.lower() in response.lower():
                     candidates.append(choice)
         
-        return candidates[0] if candidates else None
+        # Backward compatibility - return last match
+        matches = self._extract_multiple_choice_with_positions(prediction, choices_dict)
+        return matches[-1][0] if matches else None
+    
+    def _extract_natural_language_with_positions(self, prediction: str) -> List[Tuple[str, int, int]]:
+        """Extract answers from natural language patterns with positions."""
+        matches = []
+        
+        # Common answer introduction patterns
+        patterns = [
+            r'So the final answer is\s*([^.\n]+)',
+            r'Therefore,?\s*the answer is\s*([^.\n]+)',
+            r'The answer is\s*([^.\n]+)',
+            r'Answer:\s*([^\n]+)',
+            r'Final Answer:\s*([^\n]+)',
+            r'Solution:\s*([^\n]+)',
+            r'Result:\s*([^\n]+)',
+        ]
+        
+        for pattern in patterns:
+            for match in re.finditer(pattern, prediction, re.IGNORECASE):
+                content = match.group(1).strip()
+                if content:
+                    matches.append((content, match.start(), match.end()))
+        
+        return matches
     
     def _extract_natural_language_answers(self, prediction: str) -> Optional[str]:
         """Extract answers from natural language patterns."""
@@ -591,7 +785,30 @@ class VMCBenchScorer:
             if match:
                 return match.group(1).strip()
         
-        return None
+        # Backward compatibility - return last match
+        matches = self._extract_natural_language_with_positions(prediction)
+        return matches[-1][0] if matches else None
+    
+    def _extract_boolean_answers_with_positions(self, prediction: str) -> List[Tuple[str, int, int]]:
+        """Extract boolean answers with positions."""
+        matches = []
+        pred_lower = prediction.lower()
+        
+        # Yes patterns
+        yes_patterns = ['yes', 'true', 'correct', 'right']
+        no_patterns = ['no', 'false', 'incorrect', 'wrong']
+        
+        # Find all yes patterns
+        for pattern in yes_patterns:
+            for match in re.finditer(r'\b' + pattern + r'\b', pred_lower):
+                matches.append(('yes', match.start(), match.end()))
+        
+        # Find all no patterns  
+        for pattern in no_patterns:
+            for match in re.finditer(r'\b' + pattern + r'\b', pred_lower):
+                matches.append(('no', match.start(), match.end()))
+        
+        return matches
     
     def _extract_boolean_answers(self, prediction: str) -> Optional[str]:
         """Extract boolean/yes-no style answers."""
@@ -610,7 +827,38 @@ class VMCBenchScorer:
         elif no_count > yes_count and no_count > 0:
             return 'no'
         
-        return None
+        # Backward compatibility - return last match
+        matches = self._extract_boolean_answers_with_positions(prediction)
+        if not matches:
+            return None
+        
+        # Count yes vs no to determine final answer
+        yes_count = sum(1 for content, _, _ in matches if content == 'yes')
+        no_count = sum(1 for content, _, _ in matches if content == 'no')
+        
+        if yes_count > no_count:
+            return 'yes'
+        elif no_count > yes_count:
+            return 'no'
+        else:
+            return matches[-1][0]  # If tied, return last occurrence
+    
+    def _extract_numeric_answers_with_positions(self, prediction: str) -> List[Tuple[str, int, int]]:
+        """Extract numeric answers with positions."""
+        matches = []
+        
+        # Look for numbers (decimals first for specificity)
+        number_patterns = [
+            r'-?\d+\.\d+',  # Decimals
+            r'-?\d+',       # Integers
+        ]
+        
+        for pattern in number_patterns:
+            for match in re.finditer(pattern, prediction):
+                content = match.group(0)
+                matches.append((content, match.start(), match.end()))
+        
+        return matches
     
     def _extract_numeric_answers(self, prediction: str) -> Optional[str]:
         """Extract numeric answers from text."""
@@ -625,7 +873,30 @@ class VMCBenchScorer:
             if matches:
                 return matches[-1]  # Return last number found
         
-        return None
+        # Backward compatibility - return last match
+        matches = self._extract_numeric_answers_with_positions(prediction)
+        return matches[-1][0] if matches else None
+    
+    def _check_mathematical_equivalence_with_positions(self, prediction: str, answer: str) -> List[Tuple[str, int, int]]:
+        """Check mathematical equivalence with position info."""
+        if not SYMPY_AVAILABLE:
+            return []
+            
+        try:
+            # Try to parse both as mathematical expressions
+            pred_expr = sympify(prediction)
+            answer_expr = sympify(answer)
+            
+            # Check if expressions are equivalent
+            diff = simplify(pred_expr - answer_expr)
+            if diff == 0:
+                # Return the answer as equivalent (position spans whole prediction)
+                return [(answer, 0, len(prediction))]
+                
+        except Exception:
+            pass
+        
+        return []
     
     def _check_mathematical_equivalence(self, prediction: str, answer: str) -> Optional[str]:
         """Check mathematical equivalence using SymPy."""
