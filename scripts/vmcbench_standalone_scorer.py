@@ -424,7 +424,7 @@ class VMCBenchScorer:
                             content_len = len(content.strip())
                             
                             # Apply strict length filter for structured extraction strategies
-                            if strategy_name in ["Structured Tags", "Math Expressions"]:
+                            if strategy_name in ["Structured Tags", "Math Expressions", "Natural Language"]:
                                 # Require exact length match - if lengths don't match, reject this extraction
                                 if content_len != gt_len:
                                     continue  # Skip this match, try next strategy
