@@ -446,16 +446,20 @@ class VLMEvalKitScorer:
                             content_len = len(content.strip())
                             
                             # Apply strict length filter for structured extraction strategies
-                            # Exception: If content can be converted to float, bypass length filter (for numeric answers)
-                            can_convert_to_float = False
+                            # Exception: If both ground truth and content can be converted to float AND neither are integers, bypass length filter
+                            should_bypass_length_filter = False
                             try:
-                                float(content.strip())
-                                can_convert_to_float = True
+                                gt_float = float(answer.strip())
+                                content_float = float(content.strip())
+                                # Only bypass if both convert to float AND at least one has decimal places (not an integer)
+                                gt_is_int = gt_float.is_integer()
+                                content_is_int = content_float.is_integer()
+                                should_bypass_length_filter = not (gt_is_int and content_is_int)
                             except (ValueError, TypeError):
                                 pass
                             
-                            if (strategy_name in ["Structured Tags", "Math Expressions", "Natural Language", "Boolean Answers"] 
-                                and not can_convert_to_float):
+                            if (strategy_name in ["LaTeX Boxed", "Structured Tags", "Math Expressions", "Natural Language", "Boolean Answers"] 
+                                and not should_bypass_length_filter):
                                 # Require exact length match - if lengths don't match, reject this extraction
                                 if content_len != gt_len:
                                     continue  # Skip this match, try next strategy
