@@ -1227,14 +1227,61 @@ class VLMEvalKitScorer:
         except Exception as e:
             self.logger.error(f"Error during intermediate file cleanup: {e}")
     
-    def _save_summary_to_file(self, summary_lines: List[str]):
-        """Save summary statistics to a text file."""
-        summary_path = self.output_dir / "dcvlr_scoring_summary.txt"
+    def _save_summary_to_file(self, summary_data: dict):
+        """Save summary statistics to a JSON file, merging with existing data if present."""
+        summary_path = self.output_dir / "dcvlr_scoring_summary.json"
         
         try:
+            # Load existing JSON if it exists
+            existing_data = {}
+            if summary_path.exists():
+                try:
+                    with open(summary_path, 'r', encoding='utf-8') as f:
+                        existing_data = json.load(f)
+                    self.logger.info(f"Loaded existing summary data with {len(existing_data.get('benchmark_results', {}))} benchmarks")
+                except (json.JSONDecodeError, KeyError) as e:
+                    self.logger.warning(f"Could not read existing summary file: {e}. Creating new file.")
+                    existing_data = {}
+            
+            # Merge/update the data
+            # Update metadata with current run info
+            existing_data.update({
+                'last_updated': summary_data['timestamp'],
+                'total_runs': existing_data.get('total_runs', 0) + 1,
+                'llm_backend': summary_data['llm_backend'],
+                'resume_mode': summary_data['resume_mode'],
+                'max_samples': summary_data['max_samples']
+            })
+            
+            # Initialize benchmark_results if not present
+            if 'benchmark_results' not in existing_data:
+                existing_data['benchmark_results'] = {}
+            
+            # Update benchmark results (overwrite duplicates)
+            for benchmark_name, benchmark_data in summary_data['benchmark_results'].items():
+                existing_data['benchmark_results'][benchmark_name] = benchmark_data
+                self.logger.info(f"Updated results for benchmark: {benchmark_name}")
+            
+            # Recalculate overall statistics from all benchmarks
+            if existing_data['benchmark_results']:
+                total_samples = sum(data['total_samples'] for data in existing_data['benchmark_results'].values())
+                total_hits = sum(data['hits'] for data in existing_data['benchmark_results'].values())
+                overall_accuracy = total_hits / total_samples if total_samples > 0 else 0
+                
+                existing_data['overall_statistics'] = {
+                    'total_benchmarks': len(existing_data['benchmark_results']),
+                    'total_samples': total_samples,
+                    'total_hits': total_hits,
+                    'overall_accuracy': overall_accuracy
+                }
+            
+            # Save updated JSON
             with open(summary_path, 'w', encoding='utf-8') as f:
-                f.write("\n".join(summary_lines))
+                json.dump(existing_data, f, indent=2, ensure_ascii=False)
+            
             self.logger.info(f"Saved summary statistics to: {summary_path}")
+            self.logger.info(f"Summary now contains {len(existing_data['benchmark_results'])} benchmarks")
+            
         except Exception as e:
             self.logger.error(f"Error saving summary file: {e}")
     
@@ -1248,21 +1295,18 @@ class VLMEvalKitScorer:
         
         # Track overall statistics across all benchmarks
         all_benchmark_stats = []
-        summary_lines = []
         
-        # Add header to summary
+        # Prepare summary data structure
         import time
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        summary_lines.extend([
-            "DCVLR Standalone Scorer - Results Summary",
-            f"Generated: {timestamp}",
-            f"Benchmarks processed: {', '.join(self.benchmarks)}",
-            f"LLM Backend: {self.llm_judge.__class__.__name__ if hasattr(self, 'llm_judge') else 'N/A'}",
-            f"Resume mode: {'Enabled' if self.resume else 'Disabled'}",
-            f"Max samples: {self.max_samples if self.max_samples else 'No limit'}",
-            "=" * 60,
-            ""
-        ])
+        summary_data = {
+            'timestamp': timestamp,
+            'benchmarks_processed': list(self.benchmarks),
+            'llm_backend': self.llm_judge.__class__.__name__ if hasattr(self, 'llm_judge') else 'N/A',
+            'resume_mode': self.resume,
+            'max_samples': self.max_samples,
+            'benchmark_results': {}
+        }
         
         for benchmark_name, file_path in found_files.items():
             try:
@@ -1278,46 +1322,59 @@ class VLMEvalKitScorer:
                     hits = results_df['hit'].sum() if 'hit' in results_df.columns else 0
                     accuracy = hits / total_rows if total_rows > 0 else 0
                     
-                    # Store stats for overall summary
+                    # Prepare benchmark data for JSON
+                    benchmark_data = {
+                        'total_samples': total_rows,
+                        'hits': float(hits),  # Ensure JSON serializable
+                        'accuracy': float(accuracy),
+                        'last_processed': timestamp,
+                        'file_path': str(file_path)
+                    }
+                    
+                    # Add stage breakdown if available
+                    stage_cols = ['stage1_match', 'stage2_match', 'stage3_match', 'stage4_match']
+                    if all(col in results_df.columns for col in stage_cols):
+                        stage_stats = {
+                            'stage1_simple': int(results_df['stage1_match'].sum()),
+                            'stage2_complex': int(results_df['stage2_match'].sum()),
+                            'stage3_llm': int(results_df['stage3_match'].sum()),
+                            'stage4_fallback': int(results_df['stage4_match'].sum())
+                        }
+                        benchmark_data['stage_breakdown'] = stage_stats
+                    
+                    # Add answer type breakdown if available
+                    if 'answer_type' in results_df.columns:
+                        type_breakdown = {}
+                        for answer_type in results_df['answer_type'].unique():
+                            type_rows = results_df[results_df['answer_type'] == answer_type]
+                            type_score = type_rows['hit'].sum()
+                            type_avg = type_score / len(type_rows) if len(type_rows) > 0 else 0
+                            type_breakdown[str(answer_type)] = {
+                                'count': len(type_rows),
+                                'score': float(type_score),
+                                'accuracy': float(type_avg)
+                            }
+                        benchmark_data['answer_type_breakdown'] = type_breakdown
+                    
+                    # Store in summary data
+                    summary_data['benchmark_results'][benchmark_name] = benchmark_data
+                    
+                    # Store stats for overall summary (for backwards compatibility)
                     all_benchmark_stats.append({
                         'benchmark': benchmark_name,
                         'total': total_rows,
                         'hits': hits,
                         'accuracy': accuracy
                     })
-                    
-                    # Add to summary text
-                    summary_lines.extend([
-                        f"=== {benchmark_name} ===",
-                        f"Total samples: {total_rows}",
-                        f"Correct answers: {hits}",
-                        f"Accuracy: {accuracy:.3f} ({accuracy*100:.1f}%)",
-                        ""
-                    ])
-                    
-                    # Add stage breakdown if available
-                    stage_cols = ['stage1_match', 'stage2_match', 'stage3_match', 'stage4_match']
-                    if all(col in results_df.columns for col in stage_cols):
-                        stage_stats = {
-                            'Stage 1 (Simple)': results_df['stage1_match'].sum(),
-                            'Stage 2 (Complex)': results_df['stage2_match'].sum(),
-                            'Stage 3 (LLM)': results_df['stage3_match'].sum(),
-                            'Stage 4 (Fallback)': results_df['stage4_match'].sum()
-                        }
-                        
-                        summary_lines.append("Stage success breakdown:")
-                        for stage, count in stage_stats.items():
-                            percentage = count / total_rows * 100 if total_rows > 0 else 0
-                            summary_lines.append(f"  {stage}: {count} ({percentage:.1f}%)")
-                        summary_lines.append("")
                 
             except Exception as e:
                 self.logger.error(f"Error processing {benchmark_name}: {e}")
-                summary_lines.extend([
-                    f"=== {benchmark_name} (ERROR) ===",
-                    f"Error: {str(e)}",
-                    ""
-                ])
+                # Store error in JSON as well
+                summary_data['benchmark_results'][benchmark_name] = {
+                    'error': str(e),
+                    'last_processed': timestamp,
+                    'status': 'failed'
+                }
                 continue
         
         # Calculate and display overall statistics
@@ -1326,6 +1383,15 @@ class VLMEvalKitScorer:
             total_hits = sum(stat['hits'] for stat in all_benchmark_stats)
             overall_accuracy = total_hits / total_samples if total_samples > 0 else 0
             
+            # Add overall statistics to JSON
+            summary_data['overall_statistics'] = {
+                'total_benchmarks': len(all_benchmark_stats),
+                'total_samples': total_samples,
+                'total_hits': total_hits,
+                'overall_accuracy': overall_accuracy
+            }
+            
+            # Create console output
             overall_summary = [
                 "=" * 60,
                 "OVERALL SUMMARY",
@@ -1343,8 +1409,6 @@ class VLMEvalKitScorer:
                     f"  {stat['benchmark']}: {stat['hits']}/{stat['total']} = {stat['accuracy']:.3f} ({stat['accuracy']*100:.1f}%)"
                 )
             
-            summary_lines.extend(overall_summary)
-            
             # Print overall summary to console
             print("\n" + "\n".join(overall_summary))
         
@@ -1356,14 +1420,13 @@ class VLMEvalKitScorer:
             "=" * 60,
             f"Processed {len(found_files)} benchmarks",
             f"Output directory: {self.output_dir}",
-            f"Summary saved to: {self.output_dir / 'dcvlr_scoring_summary.txt'}"
+            f"Summary saved to: {self.output_dir / 'dcvlr_scoring_summary.json'}"
         ]
         
-        summary_lines.extend(completion_msg)
         print("\n" + "\n".join(completion_msg))
         
-        # Save summary to file
-        self._save_summary_to_file(summary_lines)
+        # Save summary to JSON file
+        self._save_summary_to_file(summary_data)
 
 
 class LLMEquivalenceJudge:
