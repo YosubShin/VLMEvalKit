@@ -40,7 +40,7 @@ def build_physic_prompt(line):
     return [{"type": "text", "value": prompt_text}]
 
 
-def PHYSIC_auxeval(model, line, capture_judge_responses=False):
+def PHYSIC_auxeval(model, line):
     equiv_data = {}
     try:
         response = line['prediction']
@@ -58,8 +58,8 @@ def PHYSIC_auxeval(model, line, capture_judge_responses=False):
             return dict(log=equiv_data, res=True)
 
         for pred in flat_preds:
-            equiv_data = is_equiv(model, pred, gt, capture_judge_responses=capture_judge_responses)
-            if equiv_data['llm_result']:
+            equiv_data = is_equiv(model, pred, gt)
+            if equiv_data['final_result']:
                 equiv_data['LOG'] = 'Equivalence found, returning True.'
                 return dict(log=equiv_data, res=True)
 

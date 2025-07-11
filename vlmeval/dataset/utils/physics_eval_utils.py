@@ -72,7 +72,7 @@ def _standardize_expr(expr):
     return simplify(expand(trigsimp(expr)))
 
 
-def is_equiv(model, expr1: str, expr2: str, verbose: bool = False, capture_judge_responses: bool = False) -> dict:
+def is_equiv(model, expr1: str, expr2: str, verbose: bool = False) -> dict:
     result_data = {
         "input_expressions": {"expr1": expr1, "expr2": expr2},
         "preprocessed_expressions": {},
@@ -84,18 +84,16 @@ def is_equiv(model, expr1: str, expr2: str, verbose: bool = False, capture_judge
     }
     try:
         if "\text" in expr1 or "\text" in expr2:
+            # If no model available, fall back to exact string matching for text-based expressions
+            if model is None:
+                result_data["llm_result"] = 0  # No LLM available
+                result_data["final_result"] = False
+                result_data["error"] = "No LLM model available for text-based comparison, defaulting to False"
+                return result_data
+            
             model.sys_prompt = Judge_SYS_PROMPT
             user_prompt = Judge_USER_PROMPT.format(expr1=expr1, expr2=expr2)
             generate_result = model.generate(user_prompt)
-            
-            # Capture judge response if enabled
-            if capture_judge_responses:
-                result_data["judge_response_1"] = {
-                    "prompt": user_prompt,
-                    "response": generate_result,
-                    "timestamp": __import__('time').strftime('%Y-%m-%d %H:%M:%S'),
-                    "reason": "text_based_comparison"
-                }
             
             if generate_result and "true" in generate_result.lower():
                 result_data["llm_result"] = 1
@@ -110,8 +108,16 @@ def is_equiv(model, expr1: str, expr2: str, verbose: bool = False, capture_judge
         expr2_core = _extract_core_eq(expr2_processed)
 
         try:
-            expr1_sympy = _standardize_expr(parse_latex(expr1_core))
-            expr2_sympy = _standardize_expr(parse_latex(expr2_core))
+            # Try to standardize expressions, but handle timeout issues
+            try:
+                expr1_sympy = _standardize_expr(parse_latex(expr1_core))
+                expr2_sympy = _standardize_expr(parse_latex(expr2_core))
+            except Exception:
+                # If timeout decorator fails, try without it
+                from sympy import simplify, expand, trigsimp
+                expr1_sympy = simplify(expand(trigsimp(parse_latex(expr1_core))))
+                expr2_sympy = simplify(expand(trigsimp(parse_latex(expr2_core))))
+            
             result_data["preprocessed_expressions"] = {
                 "expr1": str(expr1_sympy),
                 "expr2": str(expr2_sympy)
@@ -127,26 +133,24 @@ def is_equiv(model, expr1: str, expr2: str, verbose: bool = False, capture_judge
         if sympy_result:
             result_data["final_result"] = True
         else:
-            model.sys_prompt = Judge_SYS_PROMPT
-            user_prompt = Judge_USER_PROMPT.format(expr1=expr1, expr2=expr2)
-            generate_result = model.generate(user_prompt)
-            
-            # Capture judge response if enabled
-            if capture_judge_responses:
-                result_data["judge_response_2"] = {
-                    "prompt": user_prompt,
-                    "response": generate_result,
-                    "timestamp": __import__('time').strftime('%Y-%m-%d %H:%M:%S'),
-                    "reason": "sympy_failed_fallback_to_llm",
-                    "sympy_result": sympy_result,
-                    "sympy_error": result_data.get("error")
-                }
-            
-            if generate_result and "true" in generate_result.lower():
-                result_data["llm_result"] = 1
-            else:
+            # If SymPy failed and no model available, mark as False
+            if model is None:
                 result_data["llm_result"] = 0
-            result_data["final_result"] = result_data["llm_result"]
+                result_data["final_result"] = False
+                if result_data["error"]:
+                    result_data["error"] += "; No LLM model available for fallback comparison"
+                else:
+                    result_data["error"] = "SymPy comparison failed and no LLM model available for fallback"
+            else:
+                model.sys_prompt = Judge_SYS_PROMPT
+                user_prompt = Judge_USER_PROMPT.format(expr1=expr1, expr2=expr2)
+                generate_result = model.generate(user_prompt)
+                
+                if generate_result and "true" in generate_result.lower():
+                    result_data["llm_result"] = 1
+                else:
+                    result_data["llm_result"] = 0
+                result_data["final_result"] = result_data["llm_result"]
 
     except Exception as e:
         result_data["error"] = str(e)

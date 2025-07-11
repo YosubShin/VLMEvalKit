@@ -50,46 +50,6 @@ from vlmeval.smp import *
 from vlmeval.utils.result_transfer import MMMU_result_transfer, MMTBench_result_transfer
 
 
-def save_detailed_responses(data, filename, format_type='json'):
-    """Save detailed response data in specified format."""
-    import pandas as pd
-    from pathlib import Path
-    
-    if not data:
-        return
-    
-    filepath = Path(filename)
-    
-    if format_type == 'json':
-        import json
-        filepath = filepath.with_suffix('.json')
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    elif format_type == 'csv':
-        filepath = filepath.with_suffix('.csv')
-        df = pd.DataFrame(data)
-        df.to_csv(filepath, index=False, encoding='utf-8')
-    elif format_type == 'xlsx':
-        filepath = filepath.with_suffix('.xlsx')
-        df = pd.DataFrame(data)
-        df.to_excel(filepath, index=False)
-    
-    logger = get_logger('RUN')
-    logger.info(f"Detailed responses saved to: {filepath}")
-
-
-def create_detailed_eval_structure():
-    """Create structure for storing detailed evaluation data."""
-    return {
-        'metadata': {
-            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'vlmeval_version': '1.0',  # Could be made dynamic
-        },
-        'model_responses': [],
-        'judge_responses': [],
-        'evaluation_steps': [],
-        'final_scores': {}
-    }
 
 
 
@@ -213,30 +173,6 @@ You can launch the evaluation by setting either --data and --model or --config.
     The keys in the `model` and `data` fields will be used for naming the prediction files and evaluation results.
     When launching with `--config`, args for API VLMs, such as `--retry`, `--verbose`, will be ignored.
 
-Response Saving Options:
-    --save-judge-responses: Save raw LLM judge responses with full explanations and reasoning
-                           Currently supported: Yale_physics datasets (quantum_dataset, mechanics_dataset, 
-                           atomic_dataset, electro_dataset, optics_dataset, statistics_dataset)
-    --save-detailed-eval: Save raw model responses and comprehensive evaluation data
-                         Supported: Yale_physics, OlympiadBench, VMCBench_DEV datasets
-    --response-format [json|csv|xlsx]: Format for saving detailed responses (default: json)
-    
-    Examples:
-        # Save raw model responses for Yale physics datasets
-        python run.py --model GPT4o --data quantum_dataset --save-detailed-eval
-        
-        # Save judge responses for Yale physics (LLM-judged datasets only)
-        python run.py --model GPT4o --data mechanics_dataset --save-judge-responses
-        
-        # Save both raw responses and judge responses in Excel format
-        python run.py --model GPT4o --data atomic_dataset --save-detailed-eval --save-judge-responses --response-format xlsx
-        
-        # Save raw responses for OlympiadBench
-        python run.py --model GPT4o --data OlympiadBench --save-detailed-eval
-        
-        # Save raw responses for VMCBench  
-        python run.py --model GPT4o --data VMCBench_DEV --save-detailed-eval
-        
 Custom Model Support:
     --pass-custom-model: Automatically detect and evaluate models from HuggingFace repositories
     
@@ -282,16 +218,6 @@ Custom Model Support:
     parser.add_argument(
         '--batch-size', type=int, default=None, help='batch size for VLLM inference (only works with --use-vllm)')
     
-    # Raw response and judgment saving options
-    parser.add_argument(
-        '--save-judge-responses', action='store_true', 
-        help='Save raw LLM judge responses with full explanations and reasoning')
-    parser.add_argument(
-        '--save-detailed-eval', action='store_true', 
-        help='Save comprehensive evaluation data including intermediate steps')
-    parser.add_argument(
-        '--response-format', type=str, choices=['json', 'csv', 'xlsx'], default='json',
-        help='Format for saving detailed responses (default: json)')
     
     # Global token override
     parser.add_argument(
@@ -534,9 +460,6 @@ def main():
                     'nproc': args.api_nproc,
                     'verbose': args.verbose,
                     'retry': args.retry if args.retry is not None else 3,
-                    'save_judge_responses': args.save_judge_responses,
-                    'save_detailed_eval': args.save_detailed_eval,
-                    'response_format': args.response_format,
                     **(json.loads(args.judge_args) if args.judge_args else {}),
                 }
 
@@ -633,37 +556,6 @@ def main():
                                 eval_results = eval_results.T
                             logger.info('\n' + tabulate(eval_results))
                     
-                    # Note: Judge response saving is handled by individual benchmarks
-                    # Currently supported: Yale_physics datasets (quantum_dataset, mechanics_dataset, etc.)
-                    # Raw model response saving supported: Yale_physics, OlympiadBench, VMCBench_DEV
-                    if args.save_judge_responses and dataset_name not in [
-                        'quantum_dataset', 'mechanics_dataset', 'atomic_dataset', 
-                        'electro_dataset', 'optics_dataset', 'statistics_dataset'
-                    ]:
-                        logger.info(f"Judge response saving not yet implemented for {dataset_name}")
-                    
-                    if args.save_detailed_eval and dataset_name not in [
-                        'quantum_dataset', 'mechanics_dataset', 'atomic_dataset', 
-                        'electro_dataset', 'optics_dataset', 'statistics_dataset',
-                        'OlympiadBench', 'OlympiadBench_EN', 'OlympiadBench_CN',
-                        'VMCBench_DEV', 'VMCBench_TEST'
-                    ]:
-                        logger.info(f"Raw model response saving not yet implemented for {dataset_name}")
-                    
-                    # Save basic detailed evaluation structure if requested
-                    if args.save_detailed_eval:
-                        try:
-                            basic_detailed = create_detailed_eval_structure()
-                            basic_detailed['final_scores'] = eval_results if isinstance(eval_results, dict) else eval_results.to_dict() if eval_results is not None else {}
-                            basic_detailed['model_name'] = model_name
-                            basic_detailed['dataset_name'] = dataset_name
-                            
-                            base_filename = osp.join(pred_root, f'{model_name}_{dataset_name}')
-                            detailed_filename = f'{base_filename}_detailed_eval'
-                            save_detailed_responses(basic_detailed, detailed_filename, args.response_format)
-                                
-                        except Exception as e:
-                            logger.warning(f'Failed to save detailed evaluation data: {e}')
 
                     # Restore the proxy
                     if eval_proxy is not None:
@@ -683,6 +575,33 @@ def main():
             except Exception as e:
                 logger.exception(f'Model {model_name} x Dataset {dataset_name} combination failed: {e}, '
                                  'skipping this combination.')
+                
+                # Save exception details to a text file
+                import traceback
+                error_content = f"Model: {model_name}\n"
+                error_content += f"Dataset: {dataset_name}\n"
+                error_content += f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                error_content += f"Error: {str(e)}\n\n"
+                error_content += f"Full Traceback:\n"
+                error_content += traceback.format_exc()
+                
+                # Save error file in both locations
+                error_filename = f'{model_name}_{dataset_name}_error.txt'
+                
+                # Save in timestamped directory
+                error_file_path = osp.join(pred_root, error_filename)
+                with open(error_file_path, 'w', encoding='utf-8') as f:
+                    f.write(error_content)
+                
+                # Create symlink to error file in model directory
+                cwd = os.getcwd()
+                error_link_addr = osp.join(cwd, pred_root_meta, error_filename)
+                if osp.exists(error_link_addr) or osp.islink(error_link_addr):
+                    os.remove(error_link_addr)
+                os.symlink(osp.join(cwd, pred_root, error_filename), error_link_addr)
+                
+                logger.info(f'Exception details saved to: {error_file_path}')
+                
                 continue
 
     if WORLD_SIZE > 1:

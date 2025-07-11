@@ -25,11 +25,8 @@ Usage:
     # Run with verbose batch processing monitoring
     python scripts/wandb_logger.py --run-and-log --model molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 4 --verbose
 
-    # Run evaluation and save detailed judge responses
-    python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN --save-judge-responses --save-detailed-eval
-
-    # Run with custom response format
-    python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN --save-judge-responses --response-format xlsx
+    # Run evaluation
+    python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN
 
     # Run with custom max output tokens override
     python scripts/wandb_logger.py --run-and-log --model GPT4o --data MMBench_DEV_EN --max-output-tokens 2048
@@ -241,9 +238,6 @@ def run_evaluation_and_log(
     use_vllm: bool = False,
     batch_size: Optional[int] = None,
     verbose: bool = False,
-    save_judge_responses: bool = False,
-    save_detailed_eval: bool = False,
-    response_format: str = 'json',
     max_output_tokens: Optional[int] = None,
     pass_custom_model: Optional[str] = None,
     additional_args: List[str] = None
@@ -285,15 +279,6 @@ def run_evaluation_and_log(
     if verbose:
         cmd.append("--verbose")
     
-    # Add response saving arguments
-    if save_judge_responses:
-        cmd.append("--save-judge-responses")
-    
-    if save_detailed_eval:
-        cmd.append("--save-detailed-eval")
-    
-    if response_format != 'json':  # Only add if different from default
-        cmd.extend(["--response-format", response_format])
     
     # Add max output tokens override
     if max_output_tokens is not None:
@@ -442,11 +427,6 @@ def main():
     parser.add_argument("--batch-size", type=int, help="Batch size for VLLM inference (requires --use-vllm)")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     
-    # Response saving arguments (pass through to run.py)
-    parser.add_argument("--save-judge-responses", action="store_true", help="Save raw LLM judge responses")
-    parser.add_argument("--save-detailed-eval", action="store_true", help="Save comprehensive evaluation data")
-    parser.add_argument("--response-format", type=str, choices=['json', 'csv', 'xlsx'], default='json',
-                       help="Format for saving detailed responses")
     
     # Global token override
     parser.add_argument(
@@ -518,9 +498,6 @@ def main():
             use_vllm=args.use_vllm,
             batch_size=args.batch_size,
             verbose=args.verbose,
-            save_judge_responses=args.save_judge_responses,
-            save_detailed_eval=args.save_detailed_eval,
-            response_format=args.response_format,
             max_output_tokens=args.max_output_tokens,
             pass_custom_model=args.pass_custom_model,
             additional_args=args.run_args

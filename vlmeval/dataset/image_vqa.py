@@ -570,18 +570,28 @@ class Physics_yale(ImageBaseDataset):
         if not osp.exists(storage):
             data = load(eval_file)
             judge_kwargs['max_tokens'] = 4096
-            model = build_judge(**judge_kwargs)
-            assert model.working(), 'Physics_yale evaluation requires a working OPENAI API\n' + DEBUG_MESSAGE
+            
+            # Try to build judge model, but continue without it if unavailable
+            model = None
+            try:
+                model = build_judge(**judge_kwargs)
+                if not model.working():
+                    model = None
+            except Exception:
+                model = None
+            
+            if model is None:
+                logger = get_logger('RUN')
+                logger.warning('Physics_yale evaluation: OPENAI API is not available. '
+                              'Will use fallback strategies (exact matching and SymPy). '
+                              'LLM-based equivalence checking will be disabled.')
 
             lt = len(data)
             lines = [data.iloc[i] for i in range(lt)]
             
-            # Check if judge response capturing is enabled
-            capture_judge_responses = judge_kwargs.get('save_judge_responses', False)
-            
-            # Create wrapper function that includes the capture flag
+            # Create wrapper function for physics evaluation
             def physics_eval_wrapper(model, line):
-                return PHYSIC_auxeval(model, line, capture_judge_responses=capture_judge_responses)
+                return PHYSIC_auxeval(model, line)
             
             tups = [(model, line) for line in lines]
             indices = [line['index'] for line in lines]
@@ -610,153 +620,6 @@ class Physics_yale(ImageBaseDataset):
             data['res'] = [ans[idx]['res'] for idx in data['index']]
             data['log'] = [ans[idx]['log'] for idx in data['index']]
             dump(data, storage)
-            
-            # Save raw model responses if detailed evaluation is enabled
-            save_detailed_eval = judge_kwargs.get('save_detailed_eval', False)
-            if save_detailed_eval:
-                raw_responses = []
-                for idx in data['index']:
-                    row_data = data[data['index'] == idx]
-                    if len(row_data) > 0:
-                        raw_response_entry = {
-                            'index': idx,
-                            'question': row_data['question'].iloc[0],
-                            'raw_model_response': row_data['prediction'].iloc[0],
-                            'ground_truth_answer': row_data['answer'].iloc[0],
-                            'evaluation_result': ans.get(idx, {}).get('res', False),
-                            'timestamp': __import__('time').strftime('%Y-%m-%d %H:%M:%S'),
-                            'dataset_name': self.dataset if hasattr(self, 'dataset') else 'physics_yale'
-                        }
-                        
-                        # Add image information if available
-                        if 'image' in row_data.columns:
-                            raw_response_entry['image_path'] = row_data['image'].iloc[0]
-                        
-                        # Add category information if available
-                        if 'category' in row_data.columns:
-                            raw_response_entry['category'] = row_data['category'].iloc[0]
-                            
-                        raw_responses.append(raw_response_entry)
-                
-                if raw_responses:
-                    response_format = judge_kwargs.get('response_format', 'json')
-                    raw_file = storage.replace('.xlsx', f'_raw_responses.{response_format}')
-                    
-                    if response_format == 'json':
-                        import json
-                        with open(raw_file, 'w', encoding='utf-8') as f:
-                            json.dump(raw_responses, f, indent=2, ensure_ascii=False)
-                    elif response_format == 'csv':
-                        import pandas as pd
-                        pd.DataFrame(raw_responses).to_csv(raw_file, index=False, encoding='utf-8')
-                    elif response_format == 'xlsx':
-                        import pandas as pd
-                        pd.DataFrame(raw_responses).to_excel(raw_file, index=False)
-                    
-                    print(f"Raw model responses saved to: {raw_file}")
-            
-            # Save judge responses if capturing is enabled
-            if capture_judge_responses:
-                judge_responses = []
-                for idx in data['index']:
-                    if idx in ans and 'log' in ans[idx]:
-                        log_data = ans[idx]['log']
-                        # Check if judge responses were captured
-                        if isinstance(log_data, dict) and ('judge_response_1' in log_data or 'judge_response_2' in log_data):
-                            judge_response_entry = {
-                                'index': idx,
-                                'question': data[data['index'] == idx]['question'].iloc[0] if len(data[data['index'] == idx]) > 0 else '',
-                                'prediction': data[data['index'] == idx]['prediction'].iloc[0] if len(data[data['index'] == idx]) > 0 else '',
-                                'ground_truth': data[data['index'] == idx]['answer'].iloc[0] if len(data[data['index'] == idx]) > 0 else '',
-                                'evaluation_result': ans[idx]['res'],
-                            }
-                            
-                            # Add judge response 1 if present
-                            if 'judge_response_1' in log_data:
-                                judge_response_entry['judge_response_1'] = log_data['judge_response_1']
-                            
-                            # Add judge response 2 if present  
-                            if 'judge_response_2' in log_data:
-                                judge_response_entry['judge_response_2'] = log_data['judge_response_2']
-                            
-                            judge_responses.append(judge_response_entry)
-                
-                if judge_responses:
-                    # Save judge responses
-                    response_format = judge_kwargs.get('response_format', 'json')
-                    judge_file = storage.replace('.xlsx', f'_judge_responses.{response_format}')
-                    
-                    if response_format == 'json':
-                        import json
-                        with open(judge_file, 'w', encoding='utf-8') as f:
-                            json.dump(judge_responses, f, indent=2, ensure_ascii=False)
-                    elif response_format == 'csv':
-                        import pandas as pd
-                        # Flatten the nested judge response structure for CSV
-                        flattened_responses = []
-                        for resp in judge_responses:
-                            base_data = {k: v for k, v in resp.items() if not k.startswith('judge_response_')}
-                            
-                            if 'judge_response_1' in resp:
-                                jr1 = resp['judge_response_1']
-                                flattened_responses.append({
-                                    **base_data,
-                                    'judge_call': 1,
-                                    'judge_prompt': jr1.get('prompt', ''),
-                                    'judge_response': jr1.get('response', ''),
-                                    'judge_timestamp': jr1.get('timestamp', ''),
-                                    'judge_reason': jr1.get('reason', '')
-                                })
-                            
-                            if 'judge_response_2' in resp:
-                                jr2 = resp['judge_response_2']
-                                flattened_responses.append({
-                                    **base_data,
-                                    'judge_call': 2,
-                                    'judge_prompt': jr2.get('prompt', ''),
-                                    'judge_response': jr2.get('response', ''),
-                                    'judge_timestamp': jr2.get('timestamp', ''),
-                                    'judge_reason': jr2.get('reason', ''),
-                                    'sympy_result': jr2.get('sympy_result', ''),
-                                    'sympy_error': jr2.get('sympy_error', '')
-                                })
-                        
-                        pd.DataFrame(flattened_responses).to_csv(judge_file, index=False)
-                    elif response_format == 'xlsx':
-                        import pandas as pd
-                        # Similar flattening for Excel
-                        flattened_responses = []
-                        for resp in judge_responses:
-                            base_data = {k: v for k, v in resp.items() if not k.startswith('judge_response_')}
-                            
-                            if 'judge_response_1' in resp:
-                                jr1 = resp['judge_response_1']
-                                flattened_responses.append({
-                                    **base_data,
-                                    'judge_call': 1,
-                                    'judge_prompt': jr1.get('prompt', ''),
-                                    'judge_response': jr1.get('response', ''),
-                                    'judge_timestamp': jr1.get('timestamp', ''),
-                                    'judge_reason': jr1.get('reason', '')
-                                })
-                            
-                            if 'judge_response_2' in resp:
-                                jr2 = resp['judge_response_2']
-                                flattened_responses.append({
-                                    **base_data,
-                                    'judge_call': 2,
-                                    'judge_prompt': jr2.get('prompt', ''),
-                                    'judge_response': jr2.get('response', ''),
-                                    'judge_timestamp': jr2.get('timestamp', ''),
-                                    'judge_reason': jr2.get('reason', ''),
-                                    'sympy_result': jr2.get('sympy_result', ''),
-                                    'sympy_error': jr2.get('sympy_error', '')
-                                })
-                        
-                        pd.DataFrame(flattened_responses).to_excel(judge_file, index=False)
-                    
-                    # Log the save location
-                    print(f"Judge responses saved to: {judge_file}")
 
         score = PHYSIC_acc(storage)
         score_pth = storage.replace('.xlsx', '_score.csv')
@@ -893,13 +756,9 @@ class OlympiadBench(ImageBaseDataset):
             data = load(eval_file)
             scorez = []
             
-            # Prepare raw response saving if detailed evaluation is enabled
-            save_detailed_eval = judge_kwargs.get('save_detailed_eval', False)
-            raw_responses = [] if save_detailed_eval else None
-
             for i in tqdm(data.iterrows()):
                 line = i[1]
-                raw_model_response = line['prediction']  # Store raw response before processing
+                raw_model_response = line['prediction']
                 is_chinese = 'zh' in line['source']
                 model_answer = extract_answer(is_chinese,
                                               raw_model_response,
@@ -926,50 +785,9 @@ class OlympiadBench(ImageBaseDataset):
                     else:
                         judge_result = judger.judge(model_answer, final_answer)
                 scorez.append(judge_result)
-                
-                # Collect raw response data if saving is enabled
-                if save_detailed_eval:
-                    raw_response_entry = {
-                        'index': line.get('index', i[0]),
-                        'question': line.get('question', ''),
-                        'raw_model_response': raw_model_response,
-                        'processed_model_answer': model_answer,
-                        'ground_truth_answer': final_answer,
-                        'evaluation_result': judge_result,
-                        'timestamp': __import__('time').strftime('%Y-%m-%d %H:%M:%S'),
-                        'dataset_name': line.get('source', 'olympiadbench'),
-                        'language': 'chinese' if is_chinese else 'english',
-                        'answer_type': str(answer_type) if str(answer_type) != 'nan' else 'unknown',
-                        'subject': 'math' if 'maths' in line.get('source', '') else 'physics'
-                    }
-                    
-                    # Add optional fields if available
-                    for field in ['image', 'category', 'unit', 'is_multiple_answer', 'error']:
-                        if field in line and str(line[field]) != 'nan':
-                            raw_response_entry[field] = line[field]
-                            
-                    raw_responses.append(raw_response_entry)
 
             data['score'] = scorez
             dump(data, result_file)
-            
-            # Save raw model responses if detailed evaluation is enabled
-            if save_detailed_eval and raw_responses:
-                response_format = judge_kwargs.get('response_format', 'json')
-                raw_file = result_file.replace('_judge_result.xlsx', f'_raw_responses.{response_format}')
-                
-                if response_format == 'json':
-                    import json
-                    with open(raw_file, 'w', encoding='utf-8') as f:
-                        json.dump(raw_responses, f, indent=2, ensure_ascii=False)
-                elif response_format == 'csv':
-                    import pandas as pd
-                    pd.DataFrame(raw_responses).to_csv(raw_file, index=False, encoding='utf-8')
-                elif response_format == 'xlsx':
-                    import pandas as pd
-                    pd.DataFrame(raw_responses).to_excel(raw_file, index=False)
-                
-                print(f"Raw model responses saved to: {raw_file}")
 
         judge_file = load(result_file)
 
