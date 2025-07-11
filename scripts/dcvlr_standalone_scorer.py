@@ -127,6 +127,7 @@ class VLMEvalKitScorer:
     def find_benchmark_files(self) -> Dict[str, Path]:
         """
         Find XLSX files matching the benchmark naming pattern.
+        For Yale_physics (atomic_dataset), tries fallback to main result file if _gpt_4o_mini.xlsx doesn't exist.
         
         Returns:
             Dictionary mapping benchmark names to file paths
@@ -137,6 +138,34 @@ class VLMEvalKitScorer:
             # Pattern: {model_name}_{benchmark_name}.xlsx
             pattern = f"*_{benchmark}.xlsx"
             matches = [f for f in self.input_dir.glob(pattern) if not f.name.startswith('~$')]
+            
+            # Special handling for Yale_physics datasets (atomic_dataset)
+            if not matches and benchmark in ['atomic_dataset']:
+                # Try fallback patterns for physics datasets
+                fallback_patterns = [
+                    f"*_{benchmark}_gpt_4o_mini.xlsx",  # Look for judge result files first
+                    f"*_Yale_physics.xlsx",             # Alternative naming
+                    f"*_physics.xlsx"                   # Generic physics pattern
+                ]
+                
+                for fallback_pattern in fallback_patterns:
+                    fallback_matches = [f for f in self.input_dir.glob(fallback_pattern) if not f.name.startswith('~$')]
+                    if fallback_matches:
+                        matches = fallback_matches
+                        self.logger.info(f"Found {benchmark} file using fallback pattern '{fallback_pattern}': {fallback_matches[0]}")
+                        break
+                
+                # If still no matches, try to find the main result file and use that as fallback
+                if not matches:
+                    # Look for any file containing the model name and ending with atomic_dataset or physics
+                    all_xlsx_files = [f for f in self.input_dir.glob("*.xlsx") if not f.name.startswith('~$')]
+                    for xlsx_file in all_xlsx_files:
+                        filename = xlsx_file.name.lower()
+                        if ('atomic' in filename or 'physics' in filename) and not ('gpt' in filename or 'judge' in filename):
+                            matches = [xlsx_file]
+                            self.logger.info(f"Found {benchmark} file using main result fallback: {xlsx_file}")
+                            self.logger.info(f"Note: Using main result file instead of _gpt_4o_mini.xlsx file for Yale_physics dataset")
+                            break
             
             if matches:
                 if len(matches) > 1:
