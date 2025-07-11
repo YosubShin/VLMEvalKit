@@ -48,16 +48,16 @@ class QwenVL(BaseModel):
         assert self.use_custom_prompt(dataset)
         assert dataset is None or isinstance(dataset, str)
         tgt_path = self.dump_image(line, dataset)
-        
+
         if dataset in ["LiveXivTQA", "LiveXivVQA"]:
             prompt = self.build_prompt_livexiv(line)
         else:
             # Default to standard prompt building
             prompt = line.get('question', '')
-        
+
         message = [dict(type='text', value=prompt)]
         message.extend([dict(type='image', value=s) for s in tgt_path])
-        
+
         return message
 
     def build_prompt_livexiv(self, line, prefix=None):
@@ -68,10 +68,10 @@ class QwenVL(BaseModel):
             for cand in string.ascii_uppercase
             if cand in line and not pd.isna(line[cand])
         }
-        
+
         for key, item in options.items():
             question += f'\n{key}: {item}'
-        
+
         if prefix is None:
             prompt = f"{question}\nAnswer with the option's letter from the given choices directly."
         else:
@@ -90,7 +90,7 @@ class QwenVL(BaseModel):
                 kwargs['max_new_tokens'] = 100
             elif listinstr(['TextVQA'], dataset):
                 kwargs['max_new_tokens'] = 10
-        
+
         # Apply global token override if set
         kwargs['max_new_tokens'] = get_effective_max_tokens(kwargs['max_new_tokens'])
         return kwargs
@@ -145,16 +145,16 @@ class QwenVLChat(BaseModel):
         assert self.use_custom_prompt(dataset)
         assert dataset is None or isinstance(dataset, str)
         tgt_path = self.dump_image(line, dataset)
-        
+
         if dataset in ["LiveXivTQA", "LiveXivVQA"]:
             prompt = self.build_prompt_livexiv(line)
         else:
             # Default to standard prompt building
             prompt = line.get('question', '')
-        
+
         message = [dict(type='text', value=prompt)]
         message.extend([dict(type='image', value=s) for s in tgt_path])
-        
+
         return message
 
     def build_prompt_livexiv(self, line, prefix=None):
@@ -165,10 +165,10 @@ class QwenVLChat(BaseModel):
             for cand in string.ascii_uppercase
             if cand in line and not pd.isna(line[cand])
         }
-        
+
         for key, item in options.items():
             question += f'\n{key}: {item}'
-        
+
         if prefix is None:
             prompt = f"{question}\nAnswer with the option's letter from the given choices directly."
         else:

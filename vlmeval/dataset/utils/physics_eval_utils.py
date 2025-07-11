@@ -90,11 +90,11 @@ def is_equiv(model, expr1: str, expr2: str, verbose: bool = False) -> dict:
                 result_data["final_result"] = False
                 result_data["error"] = "No LLM model available for text-based comparison, defaulting to False"
                 return result_data
-            
+
             model.sys_prompt = Judge_SYS_PROMPT
             user_prompt = Judge_USER_PROMPT.format(expr1=expr1, expr2=expr2)
             generate_result = model.generate(user_prompt)
-            
+
             if generate_result and "true" in generate_result.lower():
                 result_data["llm_result"] = 1
             else:
@@ -117,7 +117,7 @@ def is_equiv(model, expr1: str, expr2: str, verbose: bool = False) -> dict:
                 from sympy import simplify, expand, trigsimp
                 expr1_sympy = simplify(expand(trigsimp(parse_latex(expr1_core))))
                 expr2_sympy = simplify(expand(trigsimp(parse_latex(expr2_core))))
-            
+
             result_data["preprocessed_expressions"] = {
                 "expr1": str(expr1_sympy),
                 "expr2": str(expr2_sympy)
@@ -145,7 +145,7 @@ def is_equiv(model, expr1: str, expr2: str, verbose: bool = False) -> dict:
                 model.sys_prompt = Judge_SYS_PROMPT
                 user_prompt = Judge_USER_PROMPT.format(expr1=expr1, expr2=expr2)
                 generate_result = model.generate(user_prompt)
-                
+
                 if generate_result and "true" in generate_result.lower():
                     result_data["llm_result"] = 1
                 else:

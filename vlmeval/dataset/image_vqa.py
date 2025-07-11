@@ -570,7 +570,7 @@ class Physics_yale(ImageBaseDataset):
         if not osp.exists(storage):
             data = load(eval_file)
             judge_kwargs['max_tokens'] = 4096
-            
+
             # Try to build judge model, but continue without it if unavailable
             model = None
             try:
@@ -579,20 +579,20 @@ class Physics_yale(ImageBaseDataset):
                     model = None
             except Exception:
                 model = None
-            
+
             if model is None:
                 logger = get_logger('RUN')
                 logger.warning('Physics_yale evaluation: OPENAI API is not available. '
-                              'Will use fallback strategies (exact matching and SymPy). '
-                              'LLM-based equivalence checking will be disabled.')
+                               'Will use fallback strategies (exact matching and SymPy). '
+                               'LLM-based equivalence checking will be disabled.')
 
             lt = len(data)
             lines = [data.iloc[i] for i in range(lt)]
-            
+
             # Create wrapper function for physics evaluation
             def physics_eval_wrapper(model, line):
                 return PHYSIC_auxeval(model, line)
-            
+
             tups = [(model, line) for line in lines]
             indices = [line['index'] for line in lines]
 
@@ -755,7 +755,7 @@ class OlympiadBench(ImageBaseDataset):
         if not osp.exists(result_file):
             data = load(eval_file)
             scorez = []
-            
+
             for i in tqdm(data.iterrows()):
                 line = i[1]
                 raw_model_response = line['prediction']
@@ -2643,6 +2643,7 @@ class PhyX(ImageBaseDataset):
             dump(score, score_pth)
             return score
 
+
 class Omni3DBench(ImageBaseDataset):
     TYPE = 'VQA'
     DATASET_URL = {
@@ -2665,10 +2666,10 @@ class Omni3DBench(ImageBaseDataset):
 
         data = load(eval_file)
         result = Omni3DBench_acc(data)
-        
+
         # Save score results to CSV file like other benchmarks
         suffix = eval_file.split('.')[-1]
         score_file = eval_file.replace(f'.{suffix}', '_acc.csv')
         dump(result, score_file)
-        
+
         return result

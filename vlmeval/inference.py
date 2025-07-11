@@ -80,7 +80,8 @@ def infer_data_api(model, work_dir, model_name, dataset, index_set=None, api_npr
     return res
 
 
-def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, api_nproc=4, use_vllm=False, batch_size=None):
+def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, api_nproc=4, use_vllm=False,
+               batch_size=None):
     dataset_name = dataset.dataset_name
     prev_file = f'{work_dir}/{model_name}_{dataset_name}_PREV.pkl'
     res = load(prev_file) if osp.exists(prev_file) else {}
@@ -122,7 +123,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
                 or 'Qwen2.5-VL' in model_name
                 or 'molmo' in model_name.lower()
             )
-        
+
         if is_vllm_compatible:
             kwargs = {'use_vllm': use_vllm}
 
@@ -156,26 +157,26 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
 
     # Check if we can use batch processing
     supports_batching = (
-        use_vllm and 
-        hasattr(model, 'supports_batch_processing') and 
+        use_vllm and
+        hasattr(model, 'supports_batch_processing') and
         model.supports_batch_processing() and
-        batch_size is not None and 
+        batch_size is not None and
         batch_size > 1
     )
-    
+
     if supports_batching:
         # Use batch processing for VLLM models
         if verbose:
             benefit = estimate_batch_processing_benefit(lt, batch_size)
             print(f"Using VLLM batch processing: estimated {benefit['speedup']}x speedup "
                   f"({benefit['time_saved_percent']}% time saved)")
-        
+
         res.update(infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose))
     else:
         # Use sequential processing (original behavior)
         if batch_size is not None and batch_size > 1 and verbose:
             print(f"Batch processing not available for {model_name}, using sequential processing")
-        
+
         for i in tqdm(range(lt), desc=f'Infer {model_name}/{dataset_name}, Rank {rank}/{world_size}'):
             idx = data.iloc[i]['index']
             if idx in res:
@@ -204,7 +205,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
 def infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose=False):
     """Perform batch inference using VLLM models."""
     results = {}
-    
+
     # Initialize batch collector and processor
     collector = BatchCollector(
         max_batch_size=batch_size,
@@ -212,38 +213,37 @@ def infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose=Fal
         enable_smart_batching=True,
         verbose=verbose
     )
-    
+
     processor = BatchProcessor(model, verbose=verbose)
-    
+
     # Collect all items first (for smart batching)
     total_items = len(data)
-    progress_bar = tqdm(total=total_items, desc=f'Batch Infer {model.model_name if hasattr(model, "model_name") else "Model"}/{dataset_name}')
-    
-    pending_items = []
-    
+    model_desc = model.model_name if hasattr(model, "model_name") else "Model"
+    progress_bar = tqdm(total=total_items, desc=f'Batch Infer {model_desc}/{dataset_name}')
+
     # Add all items to collector
     for i, row in data.iterrows():
         idx = row['index']
-        
+
         # Build prompt
         if hasattr(model, 'use_custom_prompt') and model.use_custom_prompt(dataset_name):
             struct = model.build_prompt(row, dataset=dataset_name)
         else:
             struct = dataset.build_prompt(row)
-        
+
         # Try to add to batch
         ready_batch = collector.add_item(idx, struct, dataset_name)
-        
+
         if ready_batch:
             # Process the ready batch
             batch_results = processor.process_batch(ready_batch)
             for item_idx, response in batch_results:
                 results[item_idx] = response
                 progress_bar.update(1)
-                
+
                 if verbose:
                     print(f"Batch result for {item_idx}: {response[:50]}...", flush=True)
-    
+
     # Process any remaining items
     remaining_batches = collector.flush_all()
     for batch in remaining_batches:
@@ -251,29 +251,30 @@ def infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose=Fal
         for item_idx, response in batch_results:
             results[item_idx] = response
             progress_bar.update(1)
-            
+
             if verbose:
                 print(f"Final batch result for {item_idx}: {response[:50]}...", flush=True)
-    
+
     progress_bar.close()
-    
+
     # Print statistics
     if verbose:
         stats = collector.get_stats()
-        print(f"Batch processing completed:")
+        print("Batch processing completed:")
         print(f"  Total items: {stats['total_collected']}")
         print(f"  Total batches: {stats['total_batches_sent']}")
         print(f"  Average batch size: {stats['avg_batch_size']:.1f}")
-    
+
     # Clear GPU cache after batch processing
     torch.cuda.empty_cache()
-    
+
     return results
 
 
 # A wrapper for infer_data, do the pre & post processing
 def infer_data_job(
-    model, work_dir, model_name, dataset, verbose=False, api_nproc=4, ignore_failed=False, use_vllm=False, batch_size=None
+    model, work_dir, model_name, dataset, verbose=False, api_nproc=4, ignore_failed=False, use_vllm=False,
+    batch_size=None
 ):
     rank, world_size = get_rank_and_world_size()
     dataset_name = dataset.dataset_name

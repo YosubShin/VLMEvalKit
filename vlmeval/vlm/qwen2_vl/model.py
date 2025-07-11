@@ -300,7 +300,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             except ImportError:
                 attn_impl = 'sdpa'
                 logging.info("flash_attention_2 not available, using sdpa for attention implementation")
-            
+
             self.model = MODEL_CLS.from_pretrained(
                 model_path, torch_dtype='auto', device_map="auto", attn_implementation=attn_impl
             )

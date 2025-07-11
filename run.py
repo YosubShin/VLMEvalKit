@@ -50,10 +50,6 @@ from vlmeval.smp import *
 from vlmeval.utils.result_transfer import MMMU_result_transfer, MMTBench_result_transfer
 
 
-
-
-
-
 # Make WORLD_SIZE invisible when build models
 def build_model_from_config(cfg, model_name, use_vllm=False):
     import vlmeval.api
@@ -175,17 +171,17 @@ You can launch the evaluation by setting either --data and --model or --config.
 
 Custom Model Support:
     --pass-custom-model: Automatically detect and evaluate models from HuggingFace repositories
-    
+
     Examples:
         # Evaluate a custom Qwen2-VL model on MMBench
         python run.py --pass-custom-model Qwen/Qwen2-VL-7B-Instruct --data MMBench_DEV_EN
-        
+
         # Evaluate a custom LLaVA model with multiple datasets
         python run.py --pass-custom-model liuhaotian/llava-v1.5-7b --data MMBench_DEV_EN MMMU_DEV_VAL
-        
+
         # Combine custom model with existing models
         python run.py --model GPT4o --pass-custom-model microsoft/Phi-3-vision-128k-instruct --data MMBench_DEV_EN
-        
+
         # Use custom model with VLLM acceleration
         python run.py --pass-custom-model oumi-ai/Molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 4
 """
@@ -214,16 +210,17 @@ Custom Model Support:
     # Reuse-aux: if set, when reuse is True, will also reuse the auxiliary evaluation files
     parser.add_argument('--reuse-aux', type=bool, default=True, help='reuse auxiliary evaluation files')
     parser.add_argument(
-        '--use-vllm', action='store_true', help='use vllm to generate, supported models: Molmo, Qwen2-VL, Llama4, Gemma3')
+        '--use-vllm', action='store_true',
+        help='use vllm to generate, supported models: Molmo, Qwen2-VL, Llama4, Gemma3')
     parser.add_argument(
         '--batch-size', type=int, default=None, help='batch size for VLLM inference (only works with --use-vllm)')
-    
-    
+
     # Global token override
     parser.add_argument(
         '--max-output-tokens', type=int, default=None,
-        help='Global override for maximum output tokens. Supersedes all model-specific and dataset-specific token limits.')
-    
+        help='Global override for maximum output tokens. Supersedes all model-specific and dataset-specific '
+             'token limits.')
+
     # Custom model support
     parser.add_argument(
         '--pass-custom-model', type=str, default=None,
@@ -237,19 +234,19 @@ Custom Model Support:
 def main():
     logger = get_logger('RUN')
     args = parse_args()
-    
+
     # Set global token override if specified
     if args.max_output_tokens is not None:
         os.environ['VLMEVAL_MAX_OUTPUT_TOKENS'] = str(args.max_output_tokens)
         logger.info(f'Global max output tokens override set to: {args.max_output_tokens}')
-    
+
     # Handle custom model detection
     if args.pass_custom_model is not None:
         try:
             from vlmeval.utils.model_detection import register_custom_model
             custom_model_name = register_custom_model(args.pass_custom_model)
             logger.info(f'Successfully registered custom model: {custom_model_name} -> {args.pass_custom_model}')
-            
+
             # Override model argument to use the custom model
             if args.model is None:
                 args.model = [custom_model_name]
@@ -257,13 +254,15 @@ def main():
                 # If other models were specified, add the custom model to the list
                 args.model.append(custom_model_name)
                 logger.info(f'Added custom model to evaluation list: {args.model}')
-                
+
         except Exception as e:
             logger.error(f'Failed to register custom model {args.pass_custom_model}: {e}')
             logger.error('Please check that the model path is valid and the model architecture is supported.')
-            logger.error('Supported architectures include: qwen2_vl, qwen_vl, llava, internvl, minicpm, phi, molmo, aria, pixtral, smolvlm, idefics, cogvlm, deepseek, llama-vision, gemma, vila, ovis, bunny, cambrian, mantis, moondream')
+            logger.error('Supported architectures include: qwen2_vl, qwen_vl, llava, internvl, minicpm, phi, molmo, '
+                         'aria, pixtral, smolvlm, idefics, cogvlm, deepseek, llama-vision, gemma, vila, ovis, '
+                         'bunny, cambrian, mantis, moondream')
             return
-    
+
     use_config, cfg = False, None
     if args.config is not None:
         # When using config, don't allow --model unless it's from --pass-custom-model
@@ -272,7 +271,7 @@ def main():
         if args.data is not None:
             raise ValueError('--data should not be set when using --config')
         use_config, cfg = True, load(args.config)
-        
+
         # If we have a custom model, add it to the config models
         if args.pass_custom_model is not None and args.model is not None:
             config_models = list(cfg['model'].keys())
@@ -555,7 +554,6 @@ def main():
                             if len(eval_results) < len(eval_results.columns):
                                 eval_results = eval_results.T
                             logger.info('\n' + tabulate(eval_results))
-                    
 
                     # Restore the proxy
                     if eval_proxy is not None:
@@ -575,33 +573,33 @@ def main():
             except Exception as e:
                 logger.exception(f'Model {model_name} x Dataset {dataset_name} combination failed: {e}, '
                                  'skipping this combination.')
-                
+
                 # Save exception details to a text file
                 import traceback
                 error_content = f"Model: {model_name}\n"
                 error_content += f"Dataset: {dataset_name}\n"
                 error_content += f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
                 error_content += f"Error: {str(e)}\n\n"
-                error_content += f"Full Traceback:\n"
+                error_content += "Full Traceback:\n"
                 error_content += traceback.format_exc()
-                
+
                 # Save error file in both locations
                 error_filename = f'{model_name}_{dataset_name}_error.txt'
-                
+
                 # Save in timestamped directory
                 error_file_path = osp.join(pred_root, error_filename)
                 with open(error_file_path, 'w', encoding='utf-8') as f:
                     f.write(error_content)
-                
+
                 # Create symlink to error file in model directory
                 cwd = os.getcwd()
                 error_link_addr = osp.join(cwd, pred_root_meta, error_filename)
                 if osp.exists(error_link_addr) or osp.islink(error_link_addr):
                     os.remove(error_link_addr)
                 os.symlink(osp.join(cwd, pred_root, error_filename), error_link_addr)
-                
+
                 logger.info(f'Exception details saved to: {error_file_path}')
-                
+
                 continue
 
     if WORLD_SIZE > 1:

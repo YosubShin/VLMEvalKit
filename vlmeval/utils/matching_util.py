@@ -26,17 +26,17 @@ def can_infer_option(answer, choices):
     xml_match = re.search(r'<answer>\s*([A-Z])\s*</answer>', answer, re.IGNORECASE)
     if xml_match and xml_match.group(1).upper() in choices:
         return xml_match.group(1).upper()
-    
+
     # Check for LaTeX boxed format: \boxed{D}
     latex_match = re.search(r'\\boxed\s*\{\s*([A-Z])\s*\}', answer, re.IGNORECASE)
     if latex_match and latex_match.group(1).upper() in choices:
         return latex_match.group(1).upper()
-    
+
     # Check for explicit answer patterns
     # Matches: "Answer: D", "The answer is D", "The correct answer is D", etc.
     answer_pattern = re.search(
-        r'(?:(?:The|the)?\s*(?:correct|best|final)?\s*answer\s*(?:is|:)\s*)([A-Z])(?:\s|$|\.|\,)', 
-        answer, 
+        r'(?:(?:The|the)?\s*(?:correct|best|final)?\s*answer\s*(?:is|:)\s*)([A-Z])(?:\s|$|\.|\,)',
+        answer,
         re.IGNORECASE
     )
     if answer_pattern and answer_pattern.group(1).upper() in choices:

@@ -31,10 +31,10 @@ def modelscope_flag_set():
 
 def get_effective_max_tokens(default_tokens):
     """Get the effective max tokens, considering global override.
-    
+
     Args:
         default_tokens (int): The default max tokens for this model/context
-        
+
     Returns:
         int: The effective max tokens to use (global override if set, otherwise default)
     """

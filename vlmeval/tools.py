@@ -52,7 +52,8 @@ dataset_levels = {
     'l2': [
         ('MME', 'score.csv'), ('LLaVABench', 'score.csv'), ('RealWorldQA', 'acc.csv'),
         ('MMBench', 'acc.csv'), ('MMBench_CN', 'acc.csv'), ('CCBench', 'acc.csv'),
-        ('SEEDBench_IMG', 'acc.csv'), ('LiveXivTQA', 'acc.csv'), ('LiveXivVQA', 'acc.csv'), ('COCO_VAL', 'score.json'), ('POPE', 'score.csv'),
+        ('SEEDBench_IMG', 'acc.csv'), ('LiveXivTQA', 'acc.csv'), ('LiveXivVQA', 'acc.csv'),
+        ('COCO_VAL', 'score.json'), ('POPE', 'score.csv'),
         ('ScienceQA_VAL', 'acc.csv'), ('ScienceQA_TEST', 'acc.csv'), ('MMT-Bench_VAL', 'acc.csv'),
         ('SEEDBench2_Plus', 'acc.csv'), ('BLINK', 'acc.csv'), ('MTVQA_TEST', 'acc.json'),
         ('Q-Bench1_VAL', 'acc.csv'), ('A-Bench_VAL', 'acc.csv'), ('R-Bench-Dis', 'acc.csv'),

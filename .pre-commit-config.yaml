@@ -19,7 +19,7 @@ repos:
         args:
           [
             "--max-line-length=120",
-            "--ignore=F401,F403,F405,E402,E722,E741,W503,E231,E702",
+            "--ignore=F401,F403,F405,E402,E722,E741,W503,E231,E702,W504",
           ]
         exclude: ^configs/
   - repo: https://github.com/pre-commit/mirrors-yapf

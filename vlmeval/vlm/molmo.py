@@ -42,7 +42,7 @@ class molmo(BaseModel):
     INSTALL_REQ = False
     INTERLEAVE = False
 
-    def __init__(self, model_path='oumi-ai/Molmo-7B-D-0924', **kwargs):
+    def __init__(self, model_path='oumi-ai/Molmo - 7B-D - 0924', **kwargs):
         try:
             from transformers import AutoModelForCausalLM, AutoProcessor, GenerationConfig
             import einops
@@ -63,41 +63,42 @@ class molmo(BaseModel):
                 torch_dtype=torch.bfloat16,
                 device_map="auto")
 
-        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, torch_dtype=torch.bfloat16)
+        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True,
+                                                       torch_dtype=torch.bfloat16)
         self.kwargs = kwargs
         self.model_name = model_path
         # set default maximum number of crops to 36
         self.max_crops = kwargs.get('max_crops', 36)
-        
+
         # VLLM configuration
         self.use_vllm = kwargs.get('use_vllm', False)
         self.limit_mm_per_prompt = VLLM_MAX_IMAGE_INPUT_NUM
-        
+
         # Generation parameters
         self.max_new_tokens = kwargs.get('max_new_tokens', 4096)
         self.temperature = kwargs.get('temperature', 0.0)
         self.verbose = kwargs.get('verbose', False)
-        
+
         # Context length management
         self.max_context_length = kwargs.get('max_context_length', DEFAULT_MAX_CONTEXT_LENGTH)
         self.auto_truncate = kwargs.get('auto_truncate', True)
-        
+
         # Batch processing configuration
         self.max_batch_size = kwargs.get('max_batch_size', 4)  # Default to VLLM's max_num_seqs
         self.batch_timeout = kwargs.get('batch_timeout', 5.0)  # Seconds to wait for batch completion
-        
+
         if self.use_vllm:
             from vllm import LLM
             import os
-            
+
             # Suppress VLLM verbose output
             os.environ['VLLM_LOGGING_LEVEL'] = 'WARNING'
             os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
-            
+
             # Suppress VLLM progress bars
             import logging
             logging.getLogger("vllm").setLevel(logging.WARNING)
-            
+
             gpu_count = torch.cuda.device_count()
             if gpu_count >= 8:
                 tp_size = 8
@@ -110,7 +111,7 @@ class molmo(BaseModel):
             logging.info(
                 f'Using vLLM for {self.model_path} inference with {tp_size} GPUs (available: {gpu_count})'
             )
-            
+
             if os.environ.get('VLLM_WORKER_MULTIPROC_METHOD') != 'spawn':
                 logging.warning(
                     'VLLM_WORKER_MULTIPROC_METHOD is not set to spawn. '
@@ -118,7 +119,7 @@ class molmo(BaseModel):
                 )
                 # Automatically set it for this process
                 os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
-            
+
             # Determine appropriate max_model_len for Molmo
             # Molmo models typically have max_position_embeddings=4096
             # But we need to be conservative to account for variable image token counts
@@ -126,7 +127,7 @@ class molmo(BaseModel):
             if max_model_len is None:
                 # Use conservative context length that accounts for image tokens
                 max_model_len = min(4000, self.max_context_length + 500)  # Allow some headroom for VLLM
-                
+
             # Configure VLLM with optimized settings for Molmo
             self.llm = LLM(
                 model=self.model_path,
@@ -138,10 +139,11 @@ class molmo(BaseModel):
                 trust_remote_code=True,  # Required for Molmo
                 disable_log_stats=True,  # Reduce logging verbosity
             )
-            
+
             if self.verbose:
-                logging.info(f"VLLM initialized: max_num_seqs={4}, max_model_len={max_model_len}, tp_size={tp_size}")
-            
+                logging.info(f"VLLM initialized: max_num_seqs={4}, max_model_len={max_model_len}, "
+                             f"tp_size={tp_size}")
+
         else:
             if '72b' not in model_path.lower():
                 self.model = AutoModelForCausalLM.from_pretrained(
@@ -156,7 +158,8 @@ class molmo(BaseModel):
                     torch_dtype=torch.bfloat16,
                     device_map='auto')
 
-        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, torch_dtype=torch.bfloat16)
+        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True,
+                                                       torch_dtype=torch.bfloat16)
 
     def use_custom_prompt(self, dataset):
         if DATASET_TYPE(dataset) in ['Y/N', 'MCQ', 'VQA']:
@@ -262,7 +265,7 @@ class molmo(BaseModel):
         """Prepare content for VLLM inference."""
         content = []
         num_images = 0
-        
+
         for item in inputs:
             if item['type'] == 'text':
                 content.append({
@@ -283,28 +286,30 @@ class molmo(BaseModel):
                         f"Number of images exceeds the limit of {self.limit_mm_per_prompt}. "
                         f"Only the first {self.limit_mm_per_prompt} images will be used."
                     )
-        
+
         # Apply automatic truncation if enabled
         if self.auto_truncate:
             content = self._truncate_content(content, self.max_context_length)
-        
+
         return content
+
     def build_prompt_livexiv(self, line, prefix=None):
         question = line['question']
         # hint = line['hint'] if ('hint' in line and not pd.isna(line['hint'])) else None
         # if hint is not None:
         #     question = hint + '\n' + question
         options = {
-                cand: line[cand]
-                for cand in string.ascii_uppercase
-                if cand in line and not pd.isna(line[cand])
-                }
-            
+            cand: line[cand]
+            for cand in string.ascii_uppercase
+            if cand in line and not pd.isna(line[cand])
+        }
+
         for key, item in options.items():
             question += f'\n{key}: {item}'
-                
+
         if prefix is None:
-            prompt = f"{TYPE_PROMPTS['MCQ']} {question}\nAnswer with the option's letter from the given choices directly."
+            prompt = (f"{TYPE_PROMPTS['MCQ']} {question}\n"
+                      f"Answer with the option's letter from the given choices directly.")
         else:
             prompt = f"{prefix} {question}"
 
@@ -313,80 +318,81 @@ class molmo(BaseModel):
     def _estimate_token_count(self, text: str) -> int:
         """Estimate token count for text (rough approximation: 1 token ≈ 4 characters)."""
         return len(text) // 4
-    
+
     def _truncate_content(self, content: list, max_tokens: int) -> list:
         """Truncate content to fit within max_tokens while preserving images and structure."""
         if not self.auto_truncate:
             return content
-            
+
         # Separate images and text
         text_items = [item for item in content if item.get('type') == 'text']
         image_items = [item for item in content if item.get('type') in ['image', 'image_url']]
-        
+
         # Conservative estimates for Molmo:
-        # - Images: ~400-800 tokens per image depending on resolution/aspect ratio
-        # - Generation: max_new_tokens 
+        # - Images: ~400 - 800 tokens per image depending on resolution/aspect ratio
+        # - Generation: max_new_tokens
         # - System/formatting overhead: ~200 tokens
         # - Safety buffer: ~300 tokens
         image_tokens = len(image_items) * 800  # Conservative estimate for Molmo image tokens
         overhead_tokens = 200  # System prompts, formatting
         safety_buffer = 300    # Extra safety margin
-        
+
         # Calculate available tokens for text
         available_text_tokens = max_tokens - image_tokens - self.max_new_tokens - overhead_tokens - safety_buffer
-        
+
         if available_text_tokens <= 0:
             if self.verbose:
-                logging.warning(f"Too many images ({len(image_items)}) for context length. Keeping first {max_tokens // 200} images.")
+                logging.warning(f"Too many images ({len(image_items)}) for context length. "
+                                f"Keeping first {max_tokens // 200} images.")
             # Keep only essential images
             max_images = max(1, (max_tokens - self.max_new_tokens - 100) // 200)
             image_items = image_items[:max_images]
             available_text_tokens = 100  # Minimal text
-        
+
         # Combine all text content
         all_text = " ".join([item.get('text', item.get('value', '')) for item in text_items])
-        
+
         # Estimate current text tokens
         text_tokens = self._estimate_token_count(all_text)
-        
+
         if text_tokens > available_text_tokens:
             if self.verbose:
                 logging.warning(
                     f"Text content ({text_tokens} tokens) exceeds available space ({available_text_tokens} tokens). "
                     f"Truncating to fit context length of {self.max_context_length}."
                 )
-            
+
             # Calculate truncation ratio
             truncation_ratio = available_text_tokens / text_tokens
             target_length = int(len(all_text) * truncation_ratio)
-            
+
             # Prefer keeping the beginning and end of text (remove middle)
             if target_length > 0:
                 start_length = target_length // 2
                 end_length = target_length - start_length
-                
+
                 if len(all_text) > start_length + end_length + 50:  # Leave space for truncation indicator
                     truncated_text = (
-                        all_text[:start_length] + 
-                        " ... [TRUNCATED] ... " + 
+                        all_text[:start_length] +
+                        " ... [TRUNCATED] ... " +
                         all_text[-end_length:] if end_length > 0 else ""
                     )
                 else:
                     truncated_text = all_text[:target_length]
             else:
                 truncated_text = all_text[:200]  # Minimal fallback
-            
+
             # Update text items
             if text_items:
                 text_items[0]['text'] = truncated_text
                 text_items[0]['value'] = truncated_text
                 text_items = text_items[:1]  # Keep only first text item
-        
+
         # Reconstruct content maintaining order
         truncated_content = []
         text_idx = 0
         image_idx = 0
-        
+
         for item in content:
             if item.get('type') == 'text' and text_idx < len(text_items):
                 truncated_content.append(text_items[text_idx])
@@ -394,7 +400,7 @@ class molmo(BaseModel):
             elif item.get('type') in ['image', 'image_url'] and image_idx < len(image_items):
                 truncated_content.append(image_items[image_idx])
                 image_idx += 1
-                
+
         return truncated_content
 
     def _ensure_image_url(self, image_path: str) -> str:
@@ -405,40 +411,40 @@ class molmo(BaseModel):
         if os.path.exists(image_path):
             return 'file://' + os.path.abspath(image_path)
         raise ValueError(f'Invalid image path: {image_path}')
-    
+
     def _encode_image_to_base64(self, image_path: str) -> str:
         """Encode image to base64 for VLLM."""
         mime_type, _ = guess_type(image_path)
         if mime_type is None:
             mime_type = "image/jpeg"
-        
+
         image = Image.open(image_path)
         if image.mode == "RGBA":
             image = self._rgba_to_rgb(image)
-        
+
         with BytesIO() as output:
             image.convert("RGB").save(output, format="JPEG")
-            base64_encoded_data = base64.b64encode(output.getvalue()).decode("utf-8")
-        
+            base64_encoded_data = base64.b64encode(output.getvalue()).decode("utf - 8")
+
         return f"data:{mime_type};base64,{base64_encoded_data}"
-    
+
     @staticmethod
     def _rgba_to_rgb(image):
         """Convert RGBA image to RGB."""
         background = Image.new("RGBA", image.size, (255, 255, 255, 255))
         return Image.alpha_composite(background, image).convert("RGB")
-    
+
     def generate_inner_vllm(self, message, dataset=None):
         """Generate response using VLLM."""
         from vllm import SamplingParams
-        
+
         # Convert message to VLLM format
         content = self._prepare_content_vllm(message, dataset=dataset)
-        
+
         # Handle multimodal inputs
         images = []
         text_parts = []
-        
+
         for item in content:
             if item["type"] == "text":
                 text_parts.append(item["text"])
@@ -450,35 +456,36 @@ class molmo(BaseModel):
                     if image.mode != "RGB":
                         image = image.convert("RGB")
                     images.append(image)
-        
+
         # Combine text parts
         prompt = " ".join(text_parts)
-        
+
         # Final safety check: aggressively truncate if prompt is still too long
         if self.auto_truncate:
             estimated_prompt_tokens = self._estimate_token_count(prompt)
             # Very conservative limit: assume worst case for image tokens and generation
             max_prompt_tokens = 2500  # Leave plenty of room for images (~800) + generation (~200) + overhead (~500+)
-            
+
             if estimated_prompt_tokens > max_prompt_tokens:
                 if self.verbose:
-                    logging.warning(f"Final truncation: prompt too long ({estimated_prompt_tokens} tokens), truncating to {max_prompt_tokens}")
+                    logging.warning(f"Final truncation: prompt too long ({estimated_prompt_tokens} tokens), "
+                                    f"truncating to {max_prompt_tokens}")
                 # Aggressive truncation - keep only the most essential parts
                 target_chars = max_prompt_tokens * 4  # Convert back to characters
                 if len(prompt) > target_chars:
-                    prompt = prompt[:target_chars//2] + " ... [TRUNCATED] ... " + prompt[-target_chars//4:]
-        
+                    prompt = prompt[:target_chars // 2] + " ... [TRUNCATED] ... " + prompt[-target_chars // 4:]
+
         if self.verbose:
             estimated_tokens = self._estimate_token_count(prompt)
             print(f'\\033[36m[VLLM] Prompt tokens: {estimated_tokens}, Images: {len(images)}\\033[0m')
-        
+
         # Set up sampling parameters
         sampling_params = SamplingParams(
             temperature=self.temperature,
             max_tokens=get_effective_max_tokens(self.max_new_tokens),
             stop=["<|endoftext|>"]  # Molmo stop token
         )
-        
+
         # Generate with VLLM
         if images:
             outputs = self.llm.generate(
@@ -493,12 +500,12 @@ class molmo(BaseModel):
                 {"prompt": prompt},
                 sampling_params=sampling_params,
             )
-        
+
         # Extract generated text
         generated_text = ""
         for output in outputs:
             generated_text = output.outputs[0].text.strip()
-        
+
         # Apply post-processing specific to Molmo/dataset
         if dataset in ['AI2D_TEST', 'AI2D_TEST_NO_MASK']:
             if 'ai2_diagram_no_letter' in prompt:
@@ -509,10 +516,10 @@ class molmo(BaseModel):
                         generated_text = chr(answer + ord('A'))
                 except (IndexError, ValueError):
                     pass  # Keep original text if parsing fails
-        
+
         if self.verbose:
             print(f'\\033[32mVLLM Generated: {generated_text}\\033[0m')
-        
+
         return generated_text
 
     def generate_inner_transformers(self, message, dataset=None):
@@ -529,7 +536,7 @@ class molmo(BaseModel):
             # - Safety buffer: ~300 tokens
             reserved_tokens = 800 + self.max_new_tokens + 200 + 300  # Total: ~1500 tokens
             available_tokens = self.max_context_length - reserved_tokens
-            
+
             if estimated_tokens > available_tokens:
                 if self.verbose:
                     logging.warning(
@@ -538,15 +545,15 @@ class molmo(BaseModel):
                 # Calculate target length and truncate prompt
                 truncation_ratio = available_tokens / estimated_tokens
                 target_length = int(len(prompt) * truncation_ratio)
-                
+
                 # Keep beginning and end
                 start_length = target_length // 2
                 end_length = target_length - start_length
-                
+
                 if len(prompt) > start_length + end_length + 50:
                     prompt = (
-                        prompt[:start_length] + 
-                        " ... [TRUNCATED] ... " + 
+                        prompt[:start_length] +
+                        " ... [TRUNCATED] ... " +
                         prompt[-end_length:] if end_length > 0 else ""
                     )
                 else:
@@ -573,7 +580,8 @@ class molmo(BaseModel):
         with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
             output = self.model.generate_from_batch(
                 inputs,
-                GenerationConfig(max_new_tokens=get_effective_max_tokens(self.max_new_tokens), stop_strings="<|endoftext|>"),
+                GenerationConfig(max_new_tokens=get_effective_max_tokens(self.max_new_tokens),
+                                 stop_strings="<|endoftext|>"),
                 tokenizer=self.processor.tokenizer
             )
 
@@ -592,25 +600,25 @@ class molmo(BaseModel):
         # print(dataset, prompt, generated_text, inputs['images'].size()) # uncomment to debug
 
         return generated_text
-    
+
     def generate_inner(self, message, dataset=None):
         """Route to appropriate generation method."""
         if self.use_vllm:
             return self.generate_inner_vllm(message, dataset=dataset)
         else:
             return self.generate_inner_transformers(message, dataset=dataset)
-    
+
     # =============================================================================
     # BATCH PROCESSING METHODS (VLLM-ONLY)
     # =============================================================================
-    
+
     def _prepare_batch_content_vllm(self, batch_messages: list, dataset: str = None) -> list:
         """Prepare a batch of content for VLLM inference."""
         if not self.use_vllm:
             raise ValueError("Batch processing is only available when use_vllm=True")
-            
+
         batch_content = []
-        
+
         for i, message in enumerate(batch_messages):
             try:
                 content = self._prepare_content_vllm(message, dataset=dataset)
@@ -620,109 +628,111 @@ class molmo(BaseModel):
                     logging.warning(f"Failed to prepare content for batch item {i}: {e}")
                 # Add empty content as placeholder to maintain batch alignment
                 batch_content.append([{"type": "text", "text": "Error in content preparation"}])
-        
+
         return batch_content
-    
+
     def _validate_batch_size(self, batch_size: int) -> int:
         """Validate and adjust batch size based on limits."""
         if batch_size <= 0:
             return 1
         if batch_size > self.max_batch_size:
             if self.verbose:
-                logging.warning(f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}, using {self.max_batch_size}")
+                logging.warning(f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}, "
+                                f"using {self.max_batch_size}")
             return self.max_batch_size
         return batch_size
-    
+
     def _estimate_batch_memory_usage(self, batch_content: list) -> float:
         """Estimate memory usage for a batch (rough approximation)."""
         total_tokens = 0
         total_images = 0
-        
+
         for content in batch_content:
             for item in content:
                 if item.get('type') == 'text':
                     total_tokens += self._estimate_token_count(item.get('text', ''))
                 elif item.get('type') in ['image', 'image_url']:
                     total_images += 1
-        
+
         # Rough memory estimation (in MB)
         # Text tokens: ~4 bytes per token
         # Images: ~50MB per image (conservative estimate for processed images)
         memory_mb = (total_tokens * 4 / 1024 / 1024) + (total_images * 50)
         return memory_mb
-    
+
     def _split_oversized_batch(self, batch_content: list, max_memory_mb: float = 8000) -> list:
         """Split batch if it's too large for memory."""
         if not batch_content:
             return []
-            
+
         estimated_memory = self._estimate_batch_memory_usage(batch_content)
-        
+
         if estimated_memory <= max_memory_mb or len(batch_content) <= 1:
             return [batch_content]  # Single batch
-        
+
         # Split in half and recursively check
         mid = len(batch_content) // 2
         left_batches = self._split_oversized_batch(batch_content[:mid], max_memory_mb)
         right_batches = self._split_oversized_batch(batch_content[mid:], max_memory_mb)
-        
+
         return left_batches + right_batches
-    
+
     def generate_batch_vllm(self, batch_messages: list, dataset: str = None, batch_size: int = None) -> list:
         """Generate responses for a batch of messages using VLLM.
-        
+
         Args:
             batch_messages: List of message dictionaries to process
             dataset: Dataset name for context-specific processing
             batch_size: Override default batch size (will be validated)
-            
+
         Returns:
             List of generated responses in the same order as input
-            
+
         Raises:
             ValueError: If VLLM is not enabled
             RuntimeError: If batch processing fails
         """
         if not self.use_vllm:
             raise ValueError("Batch processing requires use_vllm=True")
-        
+
         if not batch_messages:
             return []
-        
+
         # Validate batch size
         if batch_size is None:
             batch_size = min(len(batch_messages), self.max_batch_size)
         else:
             batch_size = self._validate_batch_size(batch_size)
-        
+
         # If batch size is 1 or we only have 1 message, use single generation
         if batch_size == 1 or len(batch_messages) == 1:
             return [self.generate_inner_vllm(msg, dataset=dataset) for msg in batch_messages]
-        
+
         # Process in batches
         all_results = []
-        
+
         for i in range(0, len(batch_messages), batch_size):
             batch_chunk = batch_messages[i:i + batch_size]
-            
+
             try:
                 # Prepare batch content
                 batch_content = self._prepare_batch_content_vllm(batch_chunk, dataset=dataset)
-                
+
                 # Check if batch needs splitting due to memory constraints
                 content_batches = self._split_oversized_batch(batch_content)
-                
+
                 batch_results = []
                 for content_batch in content_batches:
                     chunk_results = self._process_vllm_batch(content_batch, dataset=dataset)
                     batch_results.extend(chunk_results)
-                
+
                 all_results.extend(batch_results)
-                
+
             except Exception as e:
                 if self.verbose:
-                    logging.error(f"Batch processing failed for chunk {i//batch_size + 1}, falling back to sequential: {e}")
-                
+                    logging.error(f"Batch processing failed for chunk {i // batch_size + 1}, "
+                                  f"falling back to sequential: {e}")
+
                 # Fallback to sequential processing for this chunk
                 for msg in batch_chunk:
                     try:
@@ -732,25 +742,25 @@ class molmo(BaseModel):
                         if self.verbose:
                             logging.error(f"Sequential fallback also failed: {seq_e}")
                         all_results.append("ERROR: Generation failed")
-        
+
         return all_results
-    
+
     def _process_vllm_batch(self, batch_content: list, dataset: str = None) -> list:
         """Process a single batch through VLLM."""
         from vllm import SamplingParams
-        
+
         if not batch_content:
             return []
-        
+
         # Prepare VLLM inputs
         vllm_inputs = []
-        
+
         for i, content in enumerate(batch_content):
             try:
                 # Extract images and text from content
                 images = []
                 text_parts = []
-                
+
                 for item in content:
                     if item.get("type") == "text":
                         text_parts.append(item.get("text", ""))
@@ -763,10 +773,10 @@ class molmo(BaseModel):
                             if image.mode != "RGB":
                                 image = image.convert("RGB")
                             images.append(image)
-                
+
                 # Combine text parts
                 prompt = " ".join(text_parts)
-                
+
                 # Create VLLM input
                 if images:
                     vllm_input = {
@@ -775,35 +785,35 @@ class molmo(BaseModel):
                     }
                 else:
                     vllm_input = {"prompt": prompt}
-                
+
                 vllm_inputs.append(vllm_input)
-                
+
             except Exception as e:
                 if self.verbose:
                     logging.warning(f"Failed to prepare VLLM input for batch item {i}: {e}")
                 # Add fallback input
                 vllm_inputs.append({"prompt": "Error in input preparation"})
-        
+
         # Set up sampling parameters
         sampling_params = SamplingParams(
             temperature=self.temperature,
             max_tokens=get_effective_max_tokens(self.max_new_tokens),
             stop=["<|endoftext|>"]  # Molmo stop token
         )
-        
+
         # Generate with VLLM batch processing
         try:
             if self.verbose:
                 print(f'\\033[36m[VLLM BATCH] Processing {len(vllm_inputs)} items\\033[0m')
-            
+
             outputs = self.llm.generate(vllm_inputs, sampling_params=sampling_params)
-            
+
             # Extract results
             results = []
             for i, output in enumerate(outputs):
                 try:
                     generated_text = output.outputs[0].text.strip()
-                    
+
                     # Apply dataset-specific post-processing
                     if dataset in ['AI2D_TEST', 'AI2D_TEST_NO_MASK']:
                         # Get original prompt for post-processing
@@ -816,37 +826,37 @@ class molmo(BaseModel):
                                     generated_text = chr(answer + ord('A'))
                             except (IndexError, ValueError):
                                 pass  # Keep original text if parsing fails
-                    
+
                     results.append(generated_text)
-                    
+
                     if self.verbose:
                         print(f'\\033[32m[VLLM BATCH] Item {i}: {generated_text[:50]}...\\033[0m')
-                        
+
                 except Exception as e:
                     if self.verbose:
                         logging.warning(f"Failed to process output for batch item {i}: {e}")
                     results.append("ERROR: Output processing failed")
-            
+
             return results
-            
+
         except Exception as e:
             logging.error(f"VLLM batch generation failed: {e}")
             # Return error responses for all items
             return ["ERROR: Batch generation failed"] * len(vllm_inputs)
-    
+
     def supports_batch_processing(self) -> bool:
         """Check if this model instance supports batch processing."""
         return self.use_vllm
-    
+
     def get_optimal_batch_size(self, estimated_items: int = None) -> int:
         """Get the optimal batch size for current configuration."""
         if not self.use_vllm:
             return 1
-        
+
         # Consider GPU memory and model configuration
         base_batch_size = min(self.max_batch_size, 4)  # Conservative default
-        
+
         if estimated_items is not None and estimated_items < base_batch_size:
             return estimated_items
-            
+
         return base_batch_size

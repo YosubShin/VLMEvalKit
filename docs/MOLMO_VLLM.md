@@ -16,7 +16,7 @@ Molmo models from AllenAI now support VLLM acceleration for faster inference. Th
 The following Molmo models support VLLM acceleration:
 
 - `molmoE-1B-0924` - MolmoE 1B parameter model
-- `molmo-7B-D-0924` - Molmo 7B Dense model  
+- `molmo-7B-D-0924` - Molmo 7B Dense model
 - `molmo-7B-O-0924` - Molmo 7B Optimized model
 - `molmo-72B-0924` - Molmo 72B model
 
@@ -80,7 +80,7 @@ python run.py --model molmo-7B-D-0924 --dataset MMBench_DEV_EN --use-vllm --verb
             "gpu_utils": 0.9
         },
         "molmo-7b-transformers": {
-            "class": "molmo", 
+            "class": "molmo",
             "model_path": "allenai/Molmo-7B-D-0924",
             "use_vllm": false,
             "max_crops": 36
@@ -110,7 +110,7 @@ model = molmo(
     verbose=True
 )
 
-# Initialize without VLLM  
+# Initialize without VLLM
 model_transformers = molmo(
     model_path="allenai/Molmo-7B-D-0924",
     use_vllm=False,
@@ -183,7 +183,7 @@ model = molmo(
 | `max_context_length` | int | 3800 | Maximum context length in tokens (conservative) |
 | `auto_truncate` | bool | True | Automatically truncate long inputs |
 
-### Model-Specific Parameters  
+### Model-Specific Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -202,7 +202,7 @@ model = molmo(
 ### Batching Behavior
 
 **VLLM Configuration:**
-- `max_num_seqs=4`: Can process up to 4 sequences simultaneously  
+- `max_num_seqs=4`: Can process up to 4 sequences simultaneously
 - **Current Usage**: VLMEvalKit processes one sample at a time, so batching is limited
 - **Memory Management**: VLLM automatically adjusts batch size based on available GPU memory
 - **Throughput**: Still faster than transformers due to optimized attention and memory management
@@ -224,7 +224,7 @@ model = molmo(
 
 1. **Tensor Parallelism**: Automatically configured based on available GPUs
    - 8+ GPUs: TP=8
-   - 4-7 GPUs: TP=4  
+   - 4-7 GPUs: TP=4
    - 2-3 GPUs: TP=2
    - 1 GPU: TP=1
 
@@ -248,7 +248,7 @@ model = molmo(
 # Recommended for multiprocessing
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
-# Optional: Disable V1 engine for compatibility  
+# Optional: Disable V1 engine for compatibility
 export VLLM_USE_V1=0
 ```
 
@@ -373,7 +373,7 @@ python scripts/test_molmo_vllm.py
 
 This will verify:
 - ✓ Model initialization (both VLLM and transformers)
-- ✓ Method availability 
+- ✓ Method availability
 - ✓ Content preparation
 - ✓ Configuration integration
 - ✓ Inference pipeline integration
@@ -402,7 +402,7 @@ The integration preserves Molmo's specialized prompting for different datasets:
 
 Performance comparison (approximate, varies by hardware):
 
-| Configuration | Throughput | Memory Usage | 
+| Configuration | Throughput | Memory Usage |
 |---------------|------------|--------------|
 | Molmo-7B + Transformers | 1x | 100% |
 | Molmo-7B + VLLM (1 GPU) | 2-3x | 90% |

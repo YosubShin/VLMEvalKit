@@ -1330,11 +1330,11 @@ class VMCBenchDataset(ImageBaseDataset):
     def evaluate(self, eval_file, **judge_kwargs):
         from .utils.vmcbench import get_mc_score, report_vmc_acc
         import pandas as pd
-        
+
         suffix = eval_file.split('.')[-1]
         data = load(eval_file)
         data = data.sort_values(by='index')
-        
+
         data['prediction'] = [str(x) for x in data['prediction']]
         data['hit'] = data.apply(get_mc_score, axis=1)
         result_file = eval_file.replace(f'.{suffix}', f'_result.{suffix}')

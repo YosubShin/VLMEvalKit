@@ -8,7 +8,7 @@ This document describes the VLLM-only batch processing implementation in VLMEval
 
 **Scope**: Currently supports 5 VLLM-enabled models:
 - Molmo (fully implemented)
-- Qwen2-VL 
+- Qwen2-VL
 - Llama4
 - Gemma3
 - OmniLMM
@@ -84,10 +84,10 @@ The Molmo model has been enhanced with comprehensive batch processing capabiliti
 # Key methods added to Molmo class:
 def generate_batch_vllm(self, batch_messages, dataset=None, batch_size=None):
     """Generate responses for a batch of messages using VLLM."""
-    
+
 def supports_batch_processing(self):
     """Check if this model instance supports batch processing."""
-    
+
 def get_optimal_batch_size(self, estimated_items=None):
     """Get the optimal batch size for current configuration."""
 ```
@@ -118,7 +118,7 @@ The implementation includes conservative memory estimation:
 
 ```python
 # Memory usage estimation per batch item:
-# - Text tokens: ~4 bytes per token  
+# - Text tokens: ~4 bytes per token
 # - Images: ~50MB per image (conservative estimate)
 # - Generation: max_new_tokens buffer
 # - Safety margin: 300 tokens additional buffer
@@ -259,7 +259,7 @@ python scripts/test_molmo_vllm.py
 
 Plans to extend batch processing to other VLLM models:
 - Qwen2-VL: High priority
-- Llama4: Medium priority  
+- Llama4: Medium priority
 - Gemma3: Medium priority
 - OmniLMM: Lower priority
 
@@ -271,10 +271,10 @@ To add batch processing support to a new VLLM model:
    ```python
    def generate_batch_vllm(self, batch_messages, dataset=None, batch_size=None):
        # Batch generation logic
-       
+
    def supports_batch_processing(self):
        return self.use_vllm
-       
+
    def get_optimal_batch_size(self, estimated_items=None):
        # Return optimal batch size for this model
    ```

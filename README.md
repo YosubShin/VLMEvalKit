@@ -96,7 +96,7 @@ python run.py --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct --data MMBench_DEV
 python run.py --model molmo-7B-D-0924 --data MMBench_DEV_EN --use-vllm --batch-size 2 --verbose
 ```
 
-**VLLM-Compatible Models**: 
+**VLLM-Compatible Models**:
 - **Qwen2-VL & Qwen2.5-VL**: All variants automatically detected
 - **Molmo**: All sizes with full batch processing support
 - **Llama-4**: Scout and other variants
@@ -212,7 +212,7 @@ python scripts/wandb_logger.py --run-and-log \
 
 ### New Parameters
 
-| Parameter | Description | Example | 
+| Parameter | Description | Example |
 |-----------|-------------|---------|
 | `--pass-custom-model` | HuggingFace repository for automatic model detection | `--pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct` |
 | `--max-output-tokens` | Global override for maximum output tokens | `--max-output-tokens 2048` |
