@@ -453,113 +453,9 @@ def main():
                         use_vllm=args.use_vllm,
                         batch_size=args.batch_size)
 
-                # Set the judge kwargs first before evaluation or dumping
-
-                judge_kwargs = {
-                    'nproc': args.api_nproc,
-                    'verbose': args.verbose,
-                    'retry': args.retry if args.retry is not None else 3,
-                    **(json.loads(args.judge_args) if args.judge_args else {}),
-                }
-
-                if args.retry is not None:
-                    judge_kwargs['retry'] = args.retry
-                if args.judge is not None:
-                    judge_kwargs['model'] = args.judge
-                else:
-                    print(dataset_name)
-                    if dataset.TYPE in ['MCQ', 'Y/N', 'MCQ_MMMU_Pro'] or listinstr(
-                        ['moviechat1k'], dataset_name.lower()
-                    ):
-                        if listinstr(['WeMath'], dataset_name):
-                            judge_kwargs['model'] = 'gpt-4o-mini'
-                        elif listinstr(['VisuLogic'], dataset_name):
-                            judge_kwargs['model'] = 'exact_matching'
-                        else:
-                            judge_kwargs['model'] = 'chatgpt-0125'
-                    elif listinstr(['MMVet', 'LLaVABench', 'MMBench_Video'], dataset_name):
-                        judge_kwargs['model'] = 'gpt-4-turbo'
-                    elif listinstr(['VGRPBench'], dataset_name):
-                        judge_kwargs['model'] = 'gpt-4o'
-                    elif listinstr(['MathVista', 'MathVerse', 'MathVision', 'DynaMath', 'VL-RewardBench', 'LogicVista', 'MOAT', 'OCR_Reasoning'], dataset_name):  # noqa: E501
-                        judge_kwargs['model'] = 'gpt-4o-mini'
-                    elif listinstr(['MMLongBench', 'MMDU', 'DUDE', 'SLIDEVQA', 'MIA-Bench', 'WildVision', 'MMAlignBench', 'MM-IFEval'], dataset_name):  # noqa: E501
-                        judge_kwargs['model'] = 'gpt-4o'
-                    elif listinstr(['VDC'], dataset_name):
-                        judge_kwargs['model'] = 'llama31-8b'
-                    elif listinstr(['VideoMMLU_QA', 'VideoMMLU_CAP'], dataset_name):
-                        judge_kwargs['model'] = 'qwen-72b'
-
+                # Create symbolic links for prediction files after successful inference
+                # This ensures aliases are created even if evaluation fails
                 if RANK == 0:
-                    logger.info(judge_kwargs)
-
-                if WORLD_SIZE > 1:
-                    dist.barrier()
-
-                # Only RANK 0 handles the evaluation part
-                if RANK == 0:
-                    # Prepare Submission Files for MMMU_TEST AND MMT-Bench_ALL
-                    if dataset_name in ['MMMU_TEST']:
-                        result_json = MMMU_result_transfer(result_file)
-                        logger.info(f'Transfer MMMU_TEST result to json for official evaluation, '
-                                    f'json file saved in {result_json}')
-                        continue
-                    elif 'MMT-Bench_ALL' in dataset_name:
-                        submission_file = MMTBench_result_transfer(result_file, **judge_kwargs)
-                        logger.info(f'Extract options from prediction of MMT-Bench FULL split for official evaluation '
-                                    f'(https://eval.ai/web/challenges/challenge-page/2328/overview), '
-                                    f'submission file saved in {submission_file}')
-                        continue
-
-                    # Skip the evaluation part if only infer
-                    if args.mode == 'infer':
-                        continue
-
-                    # Skip the evaluation part if the dataset evaluation is not supported or annotations are missing
-                    if 'MLLMGuard_DS' in dataset_name:
-                        logger.info('The evaluation of MLLMGuard_DS is not supported yet. ')
-                        continue
-                    elif 'AesBench_TEST' == dataset_name:
-                        logger.info(f'The results are saved in {result_file}. '
-                                    f'Please send it to the AesBench Team via huangyipo@hotmail.com.')
-                        continue
-                    elif dataset_name in ['DocVQA_TEST', 'InfoVQA_TEST', 'Q-Bench1_TEST', 'A-Bench_TEST']:
-                        logger.info(f'{dataset_name} is a test split without ground-truth. '
-                                    'Thus only the inference part is supported for those datasets. ')
-                        continue
-                    elif dataset_name in [
-                        'MMBench_TEST_CN', 'MMBench_TEST_EN', 'MMBench', 'MMBench_CN',
-                        'MMBench_TEST_CN_V11', 'MMBench_TEST_EN_V11', 'MMBench_V11', 'MMBench_CN_V11'
-                    ] and not MMBenchOfficialServer(dataset_name):
-                        logger.error(
-                            f'Can not evaluate {dataset_name} on non-official servers, will skip the evaluation.')
-                        continue
-
-                    # Setup the proxy for the evaluation
-                    eval_proxy = os.environ.get('EVAL_PROXY', None)
-                    old_proxy = os.environ.get('HTTP_PROXY', '')
-                    if eval_proxy is not None:
-                        proxy_set(eval_proxy)
-
-                    # Perform the Evaluation
-                    eval_results = dataset.evaluate(result_file, **judge_kwargs)
-                    # Display Evaluation Results in Terminal
-                    if eval_results is not None:
-                        assert isinstance(eval_results, dict) or isinstance(eval_results, pd.DataFrame)
-                        logger.info(f'The evaluation of model {model_name} x dataset {dataset_name} has finished! ')
-                        logger.info('Evaluation Results:')
-                        if isinstance(eval_results, dict):
-                            logger.info('\n' + json.dumps(eval_results, indent=4))
-                        elif isinstance(eval_results, pd.DataFrame):
-                            if len(eval_results) < len(eval_results.columns):
-                                eval_results = eval_results.T
-                            logger.info('\n' + tabulate(eval_results))
-
-                    # Restore the proxy
-                    if eval_proxy is not None:
-                        proxy_set(old_proxy)
-
-                    # Create the symbolic links for the prediction files
                     files = os.listdir(pred_root)
                     files = [x for x in files if (f'{model_name}_{dataset_name}' in x or "status.json" in x)]
                     for f in files:
@@ -569,6 +465,142 @@ def main():
                         if osp.exists(link_addr) or osp.islink(link_addr):
                             os.remove(link_addr)
                         os.symlink(file_addr, link_addr)
+                    logger.info(f'Created symbolic links for prediction files in {pred_root_meta}')
+
+                # Separate try-catch block for evaluation to prevent prediction link creation failure
+                if RANK == 0:
+                    try:
+                        # Set the judge kwargs first before evaluation or dumping
+                        judge_kwargs = {
+                            'nproc': args.api_nproc,
+                            'verbose': args.verbose,
+                            'retry': args.retry if args.retry is not None else 3,
+                            **(json.loads(args.judge_args) if args.judge_args else {}),
+                        }
+
+                        if args.retry is not None:
+                            judge_kwargs['retry'] = args.retry
+                        if args.judge is not None:
+                            judge_kwargs['model'] = args.judge
+                        else:
+                            print(dataset_name)
+                            if dataset.TYPE in ['MCQ', 'Y/N', 'MCQ_MMMU_Pro'] or listinstr(
+                                ['moviechat1k'], dataset_name.lower()
+                            ):
+                                if listinstr(['WeMath'], dataset_name):
+                                    judge_kwargs['model'] = 'gpt-4o-mini'
+                                elif listinstr(['VisuLogic'], dataset_name):
+                                    judge_kwargs['model'] = 'exact_matching'
+                                else:
+                                    judge_kwargs['model'] = 'chatgpt-0125'
+                            elif listinstr(['MMVet', 'LLaVABench', 'MMBench_Video'], dataset_name):
+                                judge_kwargs['model'] = 'gpt-4-turbo'
+                            elif listinstr(['VGRPBench'], dataset_name):
+                                judge_kwargs['model'] = 'gpt-4o'
+                            elif listinstr(['MathVista', 'MathVerse', 'MathVision', 'DynaMath', 'VL-RewardBench', 'LogicVista', 'MOAT', 'OCR_Reasoning'], dataset_name):  # noqa: E501
+                                judge_kwargs['model'] = 'gpt-4o-mini'
+                            elif listinstr(['MMLongBench', 'MMDU', 'DUDE', 'SLIDEVQA', 'MIA-Bench', 'WildVision', 'MMAlignBench', 'MM-IFEval'], dataset_name):  # noqa: E501
+                                judge_kwargs['model'] = 'gpt-4o'
+                            elif listinstr(['VDC'], dataset_name):
+                                judge_kwargs['model'] = 'llama31-8b'
+                            elif listinstr(['VideoMMLU_QA', 'VideoMMLU_CAP'], dataset_name):
+                                judge_kwargs['model'] = 'qwen-72b'
+
+                        logger.info(judge_kwargs)
+
+                        # Prepare Submission Files for MMMU_TEST AND MMT-Bench_ALL
+                        if dataset_name in ['MMMU_TEST']:
+                            result_json = MMMU_result_transfer(result_file)
+                            logger.info(f'Transfer MMMU_TEST result to json for official evaluation, '
+                                        f'json file saved in {result_json}')
+                            continue
+                        elif 'MMT-Bench_ALL' in dataset_name:
+                            submission_file = MMTBench_result_transfer(result_file, **judge_kwargs)
+                            logger.info(
+                                f'Extract options from prediction of MMT-Bench FULL split for official evaluation '
+                                f'(https://eval.ai/web/challenges/challenge-page/2328/overview), '
+                                f'submission file saved in {submission_file}')
+                            continue
+
+                        # Skip the evaluation part if only infer
+                        if args.mode == 'infer':
+                            continue
+
+                        # Skip the evaluation part if the dataset evaluation is not supported or annotations are missing
+                        if 'MLLMGuard_DS' in dataset_name:
+                            logger.info('The evaluation of MLLMGuard_DS is not supported yet. ')
+                            continue
+                        elif 'AesBench_TEST' == dataset_name:
+                            logger.info(f'The results are saved in {result_file}. '
+                                        f'Please send it to the AesBench Team via huangyipo@hotmail.com.')
+                            continue
+                        elif dataset_name in ['DocVQA_TEST', 'InfoVQA_TEST', 'Q-Bench1_TEST', 'A-Bench_TEST']:
+                            logger.info(f'{dataset_name} is a test split without ground-truth. '
+                                        'Thus only the inference part is supported for those datasets. ')
+                            continue
+                        elif dataset_name in [
+                            'MMBench_TEST_CN', 'MMBench_TEST_EN', 'MMBench', 'MMBench_CN',
+                            'MMBench_TEST_CN_V11', 'MMBench_TEST_EN_V11', 'MMBench_V11', 'MMBench_CN_V11'
+                        ] and not MMBenchOfficialServer(dataset_name):
+                            logger.error(
+                                f'Can not evaluate {dataset_name} on non-official servers, will skip the evaluation.')
+                            continue
+
+                        # Setup the proxy for the evaluation
+                        eval_proxy = os.environ.get('EVAL_PROXY', None)
+                        old_proxy = os.environ.get('HTTP_PROXY', '')
+                        if eval_proxy is not None:
+                            proxy_set(eval_proxy)
+
+                        # Perform the Evaluation
+                        eval_results = dataset.evaluate(result_file, **judge_kwargs)
+                        # Display Evaluation Results in Terminal
+                        if eval_results is not None:
+                            assert isinstance(eval_results, dict) or isinstance(eval_results, pd.DataFrame)
+                            logger.info(f'The evaluation of model {model_name} x dataset {dataset_name} has finished! ')
+                            logger.info('Evaluation Results:')
+                            if isinstance(eval_results, dict):
+                                logger.info('\n' + json.dumps(eval_results, indent=4))
+                            elif isinstance(eval_results, pd.DataFrame):
+                                if len(eval_results) < len(eval_results.columns):
+                                    eval_results = eval_results.T
+                                logger.info('\n' + tabulate(eval_results))
+
+                        # Restore the proxy
+                        if eval_proxy is not None:
+                            proxy_set(old_proxy)
+
+                    except Exception as eval_error:
+                        logger.exception(f'Evaluation failed for {model_name} x {dataset_name}: {eval_error}')
+                        logger.info('Note: Prediction files and aliases were created successfully '
+                                    'despite evaluation failure')
+
+                        # Save evaluation error details
+                        import traceback
+                        eval_error_content = f"Model: {model_name}\n"
+                        eval_error_content += f"Dataset: {dataset_name}\n"
+                        eval_error_content += f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        eval_error_content += f"Evaluation Error: {str(eval_error)}\n\n"
+                        eval_error_content += "Full Traceback:\n"
+                        eval_error_content += traceback.format_exc()
+
+                        # Save evaluation error file
+                        eval_error_filename = f'{model_name}_{dataset_name}_eval_error.txt'
+                        eval_error_file_path = osp.join(pred_root, eval_error_filename)
+                        with open(eval_error_file_path, 'w', encoding='utf-8') as f:
+                            f.write(eval_error_content)
+
+                        # Create symlink to evaluation error file
+                        cwd = os.getcwd()
+                        eval_error_link_addr = osp.join(cwd, pred_root_meta, eval_error_filename)
+                        if osp.exists(eval_error_link_addr) or osp.islink(eval_error_link_addr):
+                            os.remove(eval_error_link_addr)
+                        os.symlink(osp.join(cwd, pred_root, eval_error_filename), eval_error_link_addr)
+
+                        logger.info(f'Evaluation error details saved to: {eval_error_file_path}')
+
+                if WORLD_SIZE > 1:
+                    dist.barrier()
 
             except Exception as e:
                 logger.exception(f'Model {model_name} x Dataset {dataset_name} combination failed: {e}, '
