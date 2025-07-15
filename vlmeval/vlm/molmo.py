@@ -109,7 +109,7 @@ class molmo(BaseModel):
             else:
                 tp_size = 1
             logging.info(
-                f'Using vLLM for {self.model_path} inference with {tp_size} GPUs (available: {gpu_count})'
+                f'Using vLLM for {model_path} inference with {tp_size} GPUs (available: {gpu_count})'
             )
 
             if os.environ.get('VLLM_WORKER_MULTIPROC_METHOD') != 'spawn':
@@ -130,7 +130,7 @@ class molmo(BaseModel):
 
             # Configure VLLM with optimized settings for Molmo
             self.llm = LLM(
-                model=self.model_path,
+                model=model_path,
                 max_num_seqs=4,  # Can batch up to 4 sequences simultaneously
                 max_model_len=max_model_len,
                 limit_mm_per_prompt={"image": self.limit_mm_per_prompt},  # 1 image per prompt for Molmo
