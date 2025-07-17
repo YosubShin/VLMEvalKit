@@ -53,16 +53,21 @@ try:
 except ImportError:
     ANTHROPIC_AVAILABLE = False
 
+# Yale Physics benchmarks
+YALE_PHYSICS_BENCHMARKS = [
+    'atomic_dataset',
+    'electro_dataset', 
+    'mechanics_dataset',
+    'optics_dataset',
+    'quantum_dataset',
+    'statistics_dataset'
+]
+
 
 class VLMEvalKitScorer:
     """
     Main scorer class that implements the 4-stage answer matching pipeline.
     """
-    
-    VALID_BENCHMARKS = [
-        'VMCBench_DEV', 'VMCBench_TEST', 'atomic_dataset', 'LiveXivVQA', 
-        'OlympiadBench', 'Omni3DBench'
-    ]
     
     def __init__(self, benchmarks: List[str], input_dir: str, output_dir: Optional[str] = None,
                  llm_backend: str = 'openai', model: str = 'gpt-4o-mini', 
@@ -87,11 +92,6 @@ class VLMEvalKitScorer:
         self.verbose = verbose
         self.max_samples = max_samples
         self.resume = resume
-        
-        # Validate benchmarks
-        for benchmark in benchmarks:
-            if benchmark not in self.VALID_BENCHMARKS:
-                print(f"Warning: {benchmark} not in validated benchmark list")
         
         # Setup logging
         self._setup_logging()
@@ -127,7 +127,6 @@ class VLMEvalKitScorer:
     def find_benchmark_files(self) -> Dict[str, Path]:
         """
         Find XLSX files matching the benchmark naming pattern.
-        For Yale_physics (atomic_dataset), tries fallback to main result file if _gpt_4o_mini.xlsx doesn't exist.
         
         Returns:
             Dictionary mapping benchmark names to file paths
@@ -139,13 +138,10 @@ class VLMEvalKitScorer:
             pattern = f"*_{benchmark}.xlsx"
             matches = [f for f in self.input_dir.glob(pattern) if not f.name.startswith('~$')]
             
-            # Special handling for Yale_physics datasets (atomic_dataset)
-            if not matches and benchmark in ['atomic_dataset']:
+            if not matches and benchmark in YALE_PHYSICS_BENCHMARKS:
                 # Try fallback patterns for physics datasets
                 fallback_patterns = [
                     f"*_{benchmark}_gpt_4o_mini.xlsx",  # Look for judge result files first
-                    f"*_Yale_physics.xlsx",             # Alternative naming
-                    f"*_physics.xlsx"                   # Generic physics pattern
                 ]
                 
                 for fallback_pattern in fallback_patterns:
@@ -154,18 +150,6 @@ class VLMEvalKitScorer:
                         matches = fallback_matches
                         self.logger.info(f"Found {benchmark} file using fallback pattern '{fallback_pattern}': {fallback_matches[0]}")
                         break
-                
-                # If still no matches, try to find the main result file and use that as fallback
-                if not matches:
-                    # Look for any file containing the model name and ending with atomic_dataset or physics
-                    all_xlsx_files = [f for f in self.input_dir.glob("*.xlsx") if not f.name.startswith('~$')]
-                    for xlsx_file in all_xlsx_files:
-                        filename = xlsx_file.name.lower()
-                        if ('atomic' in filename or 'physics' in filename) and not ('gpt' in filename or 'judge' in filename):
-                            matches = [xlsx_file]
-                            self.logger.info(f"Found {benchmark} file using main result fallback: {xlsx_file}")
-                            self.logger.info(f"Note: Using main result file instead of _gpt_4o_mini.xlsx file for Yale_physics dataset")
-                            break
             
             if matches:
                 if len(matches) > 1:
