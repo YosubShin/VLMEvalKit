@@ -82,11 +82,13 @@ def PHYSIC_acc(result_file):
         cate = item.get('category', 'Overall')
 
         tot['Overall'] += 1
-        tot[cate] += 1
+        if cate != 'Overall':  # Only increment category count if it's not 'Overall' to avoid double counting
+            tot[cate] += 1
 
         if item.get('res'):
             hit['Overall'] += 1
-            hit[cate] += 1
+            if cate != 'Overall':  # Only increment category count if it's not 'Overall' to avoid double counting
+                hit[cate] += 1
 
         pred_raw = item.get("res", "")
         gt = item.get("answer", "").strip()  # noqa: F841
