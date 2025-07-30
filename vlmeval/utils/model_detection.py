@@ -368,12 +368,27 @@ def register_custom_model(model_path: str, model_name: Optional[str] = None) -> 
 
     Args:
         model_path: Path to model or HuggingFace repository name
+                   If prefixed with "/LOCAL_MODEL", the remainder is treated as an absolute local path
         model_name: Optional custom name for the model
 
     Returns:
         The registered model name
     """
     from ..config import supported_VLM
+
+    # Handle /LOCAL_MODEL prefix
+    if model_path.startswith("/LOCAL_MODEL"):
+        # Extract the actual path after the prefix
+        actual_path = model_path[len("/LOCAL_MODEL"):]
+        # Ensure it's an absolute path
+        if not os.path.isabs(actual_path):
+            raise ValueError(f"Path after /LOCAL_MODEL must be absolute, got: {actual_path}")
+        if not os.path.exists(actual_path):
+            raise ValueError(f"Local model path does not exist: {actual_path}")
+        if not os.path.isdir(actual_path):
+            raise ValueError(f"Local model path must be a directory, got: {actual_path}")
+        # Use the actual path for model detection
+        model_path = actual_path
 
     registered_name, model_partial = create_custom_model_entry(model_path, model_name)
 
