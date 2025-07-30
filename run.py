@@ -224,8 +224,9 @@ Custom Model Support:
     # Custom model support
     parser.add_argument(
         '--pass-custom-model', type=str, default=None,
-        help='Path to a HuggingFace repository for automatic model detection and evaluation. '
-             'The system will automatically detect the model architecture and use appropriate default settings.')
+        help='Path to a HuggingFace repository or local model directory for automatic model detection and evaluation. '
+             'The system will automatically detect the model architecture and use appropriate default settings. '
+             'For local models, prefix the absolute path with /LOCAL_MODEL (e.g., /LOCAL_MODEL/path/to/model).')
 
     args = parser.parse_args()
     return args
