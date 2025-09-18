@@ -111,8 +111,10 @@ Put your final answer within \\boxed{}.
         # Add image if present
         if 'image' in line and line['image']:
             # Handle image path or base64 encoding
-            image_path = self.dump_image(line)
-            msgs.append({'type': 'image', 'value': image_path})
+            image_paths = self.dump_image(line)
+            # dump_image returns a list, take the first element for single image
+            if image_paths:
+                msgs.append({'type': 'image', 'value': image_paths[0]})
 
         return msgs
 
