@@ -1,11 +1,9 @@
 import os.path as osp
 import pandas as pd
-from datasets import load_dataset
 from .image_base import ImageBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
 from ..smp import *
 from ..utils import track_progress_rich
-from ..tools import encode_image_to_base64
 
 
 class WaltonMultimodalReasoning(ImageBaseDataset):
@@ -24,6 +22,18 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
         data_file = osp.join(ROOT, f'{dataset}.tsv')
 
         if not osp.exists(data_file):
+            # Import datasets library only when needed
+            try:
+                from datasets import load_dataset
+            except ImportError:
+                raise ImportError(
+                    "The 'datasets' library is required to load WaltonMultimodalReasoning dataset. "
+                    "Please install it with: pip install datasets"
+                )
+
+            # Import encode function here to avoid circular import
+            from ..tools import encode_image_to_base64
+
             # Load from HuggingFace
             hf_dataset = load_dataset('oumi-ai/walton-multimodal-cold-start-r1-format', split='train')
 
