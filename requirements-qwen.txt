@@ -32,8 +32,9 @@ tensorflow
 tiktoken
 timeout-decorator
 timm
-torch
-torchvision
+torch==2.6.0
+torchvision==0.21.0
+flash-attn==2.6.3
 tqdm
 transformers
 typing_extensions
@@ -41,3 +42,5 @@ validators
 vllm>=0.6.4,<=0.8.3
 wandb
 xlsxwriter
+
+
