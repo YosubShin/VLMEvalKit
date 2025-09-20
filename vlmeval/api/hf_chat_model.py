@@ -74,6 +74,7 @@ class HFChatModel:
                 raise err
 
         self.explicit_device = kwargs.pop('device', None)
+        num_gpu = 1  # Default to 1 GPU
         if self.explicit_device is None:
             # If CUDA_VISIBLE_DEVICES is not properly set
             if 'CUDA_VISIBLE_DEVICES' not in os.environ or os.environ['CUDA_VISIBLE_DEVICES'] == '0,1,2,3,4,5,6,7':
@@ -81,6 +82,13 @@ class HFChatModel:
                 gpu_offset = kwargs.pop('gpu_offset', 0)
                 cuda_visible_devices = ','.join([str(i) for i in range(gpu_offset, gpu_offset + num_gpu)])
                 os.environ['CUDA_VISIBLE_DEVICES'] = cuda_visible_devices
+        else:
+            # Calculate num_gpu from existing CUDA_VISIBLE_DEVICES
+            cuda_devices = os.environ.get('CUDA_VISIBLE_DEVICES', '0')
+            if ',' in cuda_devices:
+                num_gpu = len(cuda_devices.split(','))
+            else:
+                num_gpu = 1
 
         from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModel
 
