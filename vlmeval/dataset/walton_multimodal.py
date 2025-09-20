@@ -132,7 +132,10 @@ Put your final answer within \\boxed{}.
             # Build judge model
             judge_kwargs['model'] = model
             judge_model = build_judge(**judge_kwargs)
-            assert judge_model.working(), ('WaltonMultimodalReasoning evaluation requires a working OPENAI API\n' + DEBUG_MESSAGE)
+
+            # Check if judge is working (only for API models)
+            if hasattr(judge_model, 'working'):
+                assert judge_model.working(), ('WaltonMultimodalReasoning evaluation requires a working judge model\n' + DEBUG_MESSAGE)
 
             def extract_answer(text):
                 """Extract the answer from \\boxed{} format"""
@@ -165,7 +168,7 @@ Respond with a JSON containing:
 {{"verdict": 0}} if the answer is incorrect
 """
 
-                response = model.generate(judge_prompt)
+                response = judge_model.generate(judge_prompt)
 
                 # Parse response
                 try:
