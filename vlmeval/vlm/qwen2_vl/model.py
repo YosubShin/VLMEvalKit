@@ -634,6 +634,212 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         else:
             return self.generate_inner_transformers(message, dataset=dataset)
 
+    # =============================================================================
+    # BATCH PROCESSING METHODS (VLLM-ONLY)
+    # =============================================================================
+
+    def supports_batch_processing(self) -> bool:
+        """Check if this model instance supports batch processing."""
+        return self.use_vllm
+
+    def get_optimal_batch_size(self, estimated_items: int = None) -> int:
+        """Get the optimal batch size for current configuration."""
+        if not self.use_vllm:
+            return 1
+
+        # Conservative batch size for Qwen2-VL based on GPU memory and context length
+        base_batch_size = 32  # VLLM max_num_seqs is 32, but be conservative
+
+        if estimated_items is not None and estimated_items < base_batch_size:
+            return estimated_items
+
+        return base_batch_size
+
+    def generate_batch_vllm(self, batch_messages: list, dataset: str = None, batch_size: int = None) -> list:
+        """Generate responses for a batch of messages using VLLM.
+
+        Args:
+            batch_messages: List of message dictionaries to process
+            dataset: Dataset name for context-specific processing
+            batch_size: Override default batch size
+
+        Returns:
+            List of generated responses in the same order as input
+
+        Raises:
+            ValueError: If VLLM is not enabled
+            RuntimeError: If batch processing fails
+        """
+        if not self.use_vllm:
+            raise ValueError("Batch processing requires use_vllm=True")
+
+        if not batch_messages:
+            return []
+
+        # Validate batch size
+        if batch_size is None:
+            batch_size = min(len(batch_messages), self.get_optimal_batch_size())
+        else:
+            batch_size = min(batch_size, 32)  # VLLM max_num_seqs limit
+
+        # If batch size is 1 or we only have 1 message, use single generation
+        if batch_size == 1 or len(batch_messages) == 1:
+            return [self.generate_inner_vllm(msg, dataset=dataset) for msg in batch_messages]
+
+        # Process in batches
+        all_results = []
+
+        for i in range(0, len(batch_messages), batch_size):
+            batch_chunk = batch_messages[i:i + batch_size]
+
+            try:
+                batch_results = self._process_qwen_vllm_batch(batch_chunk, dataset=dataset)
+                all_results.extend(batch_results)
+
+            except Exception as e:
+                if self.verbose:
+                    logging.error(f"Batch processing failed for chunk {i // batch_size + 1}, "
+                                  f"falling back to sequential: {e}")
+
+                # Fallback to sequential processing for this chunk
+                for msg in batch_chunk:
+                    try:
+                        result = self.generate_inner_vllm(msg, dataset=dataset)
+                        all_results.append(result)
+                    except Exception as seq_e:
+                        if self.verbose:
+                            logging.error(f"Sequential fallback also failed: {seq_e}")
+                        all_results.append("ERROR: Generation failed")
+
+        return all_results
+
+    def _process_qwen_vllm_batch(self, batch_messages: list, dataset: str = None) -> list:
+        """Process a single batch through VLLM for Qwen2-VL."""
+        from vllm import SamplingParams
+
+        if not batch_messages:
+            return []
+
+        # Import required utilities
+        if listinstr(['omni'], self.model_path.lower()):
+            try:
+                from qwen_omni_utils import process_mm_info
+            except Exception as err:
+                logging.critical("qwen_omni_utils not found, please install it via 'pip install qwen-omni-utils[decord]'")
+                raise err
+        else:
+            try:
+                from qwen_vl_utils import process_vision_info
+            except Exception as err:
+                logging.critical("qwen_vl_utils not found, please install it via 'pip install qwen-vl-utils'")
+                raise err
+
+        # Prepare VLLM inputs
+        vllm_inputs = []
+
+        for i, message in enumerate(batch_messages):
+            try:
+                # Prepare messages in Qwen format
+                messages = []
+                if self.system_prompt is not None:
+                    messages.append({'role': 'system', 'content': self.system_prompt})
+                messages.append({'role': 'user', 'content': self._prepare_content_vllm(message, dataset=dataset)})
+
+                # Apply chat template
+                text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+                # Process multimodal data
+                if listinstr(['omni'], self.model_path.lower()):
+                    audios, images, videos = process_mm_info(messages, use_audio_in_video=self.use_audio_in_video)
+                else:
+                    images, videos = process_vision_info(messages)
+
+                # Create VLLM input based on modality
+                if DATASET_MODALITY(dataset) == 'VIDEO' and videos:
+                    # Handle video input
+                    videos_nd = [videos[0].detach().cpu().numpy().transpose(0, 2, 3, 1)]
+                    vllm_input = {
+                        "prompt": text[0] if isinstance(text, list) else text,
+                        "multi_modal_data": {"video": videos_nd[0]},
+                        "mm_processor_kwargs": {}
+                    }
+                    if self.use_audio_in_video and listinstr(['omni'], self.model_path.lower()):
+                        vllm_input["multi_modal_data"]["audio"] = audios[0]
+                        vllm_input['mm_processor_kwargs']['use_audio_in_video'] = True
+                elif images:
+                    # Handle image input
+                    vllm_input = {
+                        "prompt": text,
+                        "multi_modal_data": {"image": images},
+                    }
+                else:
+                    # Text-only input
+                    vllm_input = {"prompt": text}
+
+                vllm_inputs.append(vllm_input)
+
+            except Exception as e:
+                if self.verbose:
+                    logging.warning(f"Failed to prepare VLLM input for batch item {i}: {e}")
+                # Add fallback input
+                vllm_inputs.append({"prompt": "Error in input preparation"})
+
+        # Set up sampling parameters
+        sampling_params = SamplingParams(
+            temperature=0.0,
+            max_tokens=self.max_new_tokens,
+            stop_token_ids=None
+        )
+
+        # Generate with VLLM batch processing
+        try:
+            if self.verbose:
+                print(f'[QWEN VLLM BATCH] Processing {len(vllm_inputs)} items')
+
+            outputs = self.llm.generate(vllm_inputs, sampling_params=sampling_params)
+
+            # Extract results
+            results = []
+            for i, output in enumerate(outputs):
+                try:
+                    generated_text = output.outputs[0].text
+
+                    # Apply post-processing if needed
+                    if self.post_process:
+                        resp = generated_text.split('\\boxed{')[-1]
+                        lt = len(resp)
+                        counter, end = 1, None
+                        for j in range(lt):
+                            if resp[j] == '{':
+                                counter += 1
+                            elif resp[j] == '}':
+                                counter -= 1
+                            if counter == 0:
+                                end = j
+                                break
+                            elif j == lt - 1:
+                                end = lt
+                                break
+                        if end is not None:
+                            generated_text = resp[:end]
+
+                    results.append(generated_text)
+
+                    if self.verbose:
+                        print(f'[QWEN VLLM BATCH] Item {i}: {generated_text[:50]}...')
+
+                except Exception as e:
+                    if self.verbose:
+                        logging.warning(f"Failed to process output for batch item {i}: {e}")
+                    results.append("ERROR: Output processing failed")
+
+            return results
+
+        except Exception as e:
+            logging.error(f"VLLM batch generation failed: {e}")
+            # Return error responses for all items
+            return ["ERROR: Batch generation failed"] * len(vllm_inputs)
+
 
 class Qwen2VLChatAguvis(Qwen2VLChat):
     def __init__(self, mode=None, **kwargs):
