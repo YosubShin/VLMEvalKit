@@ -45,19 +45,19 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
 
                 # Handle image - if it's a PIL image, encode to base64
                 image_data = ''
-                if 'image' in item and item['image'] is not None:
+                if 'images' in item and item['images'] is not None:
                     # The image comes as PIL Image from HuggingFace parquet
                     try:
-                        image_data = encode_image_to_base64(item['image'])
+                        image_data = encode_image_to_base64(item['images'][0])
                     except:
                         # If it's already a string (URL or base64), use as is
-                        image_data = item['image']
+                        image_data = item['images'][0]
 
                 data_list.append({
                     'index': idx,
                     'image': image_data,
                     'question': problem_text,
-                    'answer': item['solution']
+                    'answer': item['answer']
                 })
 
             # Save as TSV
