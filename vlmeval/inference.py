@@ -171,7 +171,7 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
             print(f"Using VLLM batch processing: estimated {benefit['speedup']}x speedup "
                   f"({benefit['time_saved_percent']}% time saved)")
 
-        res.update(infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose))
+        res.update(infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose, res, out_file))
     else:
         # Use sequential processing (original behavior)
         if batch_size is not None and batch_size > 1 and verbose:
@@ -202,9 +202,11 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
     return model
 
 
-def infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose=False):
+def infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose=False, existing_res=None, out_file=None):
     """Perform batch inference using VLLM models."""
     results = {}
+    existing_res = existing_res or {}
+    processed_count = 0
 
     # Initialize batch collector and processor
     collector = BatchCollector(
@@ -216,14 +218,32 @@ def infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose=Fal
 
     processor = BatchProcessor(model, verbose=verbose)
 
-    # Collect all items first (for smart batching)
+    # Count total items and items that need processing
     total_items = len(data)
+    items_to_process = 0
+    for _, row in data.iterrows():
+        idx = row['index']
+        if idx not in existing_res:
+            items_to_process += 1
+
     model_desc = model.model_name if hasattr(model, "model_name") else "Model"
     progress_bar = tqdm(total=total_items, desc=f'Batch Infer {model_desc}/{dataset_name}')
 
-    # Add all items to collector
+    # Update progress bar for already processed items
+    already_processed = total_items - items_to_process
+    if already_processed > 0:
+        progress_bar.update(already_processed)
+        if verbose:
+            print(f"Reusing {already_processed} existing results from previous run")
+
+    # Add all items to collector (skip already processed ones)
     for i, row in data.iterrows():
         idx = row['index']
+
+        # Skip if already processed (reuse logic)
+        if idx in existing_res:
+            results[idx] = existing_res[idx]
+            continue
 
         # Build prompt
         if hasattr(model, 'use_custom_prompt') and model.use_custom_prompt(dataset_name):
@@ -240,9 +260,16 @@ def infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose=Fal
             for item_idx, response in batch_results:
                 results[item_idx] = response
                 progress_bar.update(1)
+                processed_count += 1
 
                 if verbose:
                     print(f"Batch result for {item_idx}: {response[:50]}...", flush=True)
+
+                # Periodic save (every 10 items, like sequential processing)
+                if out_file and processed_count % 10 == 0:
+                    # Combine existing results with new results for saving
+                    combined_results = {**existing_res, **results}
+                    dump(combined_results, out_file)
 
     # Process any remaining items
     remaining_batches = collector.flush_all()
@@ -251,9 +278,16 @@ def infer_data_batch(model, dataset, data, dataset_name, batch_size, verbose=Fal
         for item_idx, response in batch_results:
             results[item_idx] = response
             progress_bar.update(1)
+            processed_count += 1
 
             if verbose:
                 print(f"Final batch result for {item_idx}: {response[:50]}...", flush=True)
+
+            # Periodic save (every 10 items, like sequential processing)
+            if out_file and processed_count % 10 == 0:
+                # Combine existing results with new results for saving
+                combined_results = {**existing_res, **results}
+                dump(combined_results, out_file)
 
     progress_bar.close()
 
