@@ -12,7 +12,7 @@ import argparse
 import os
 
 
-def create_walton_dataset_from_tsv(tsv_path, push_to_hub=False, repo_name="yosubshin/WaltonMultimodalColdStart-hard"):
+def create_walton_dataset_from_tsv(tsv_path, push_to_hub=False, repo_name="yosubshin/WaltonMultimodalColdStart-hard", split_type="train_only"):
     """
     Create a HuggingFace dataset from TSV file with base64 images.
 
@@ -20,6 +20,7 @@ def create_walton_dataset_from_tsv(tsv_path, push_to_hub=False, repo_name="yosub
         tsv_path: Path to TSV file with columns: index, image, question, answer
         push_to_hub: Whether to push the dataset to HuggingFace Hub
         repo_name: Repository name on HuggingFace Hub
+        split_type: Type of split - "train_only", "train_test", or "train_val_test"
     """
     print(f"Reading TSV from {tsv_path}...")
     df = pd.read_csv(tsv_path, sep='\t')
@@ -76,18 +77,42 @@ def create_walton_dataset_from_tsv(tsv_path, push_to_hub=False, repo_name="yosub
     dataset = Dataset.from_dict(dataset_dict, features=features)
     print(f"Created dataset with {len(dataset)} examples")
 
-    # Create train/test split (90/10 by default)
-    print("Creating train/test split...")
-    dataset_split = dataset.train_test_split(test_size=0.1, seed=42)
+    # Create splits based on split_type parameter
+    if split_type == "train_only":
+        # Just a single train split
+        print("Creating train-only dataset...")
+        dataset_dict = DatasetDict({
+            'train': dataset
+        })
+        print(f"Train set: {len(dataset_dict['train'])} examples")
 
-    # Rename 'test' to 'validation' if you prefer
-    dataset_dict = DatasetDict({
-        'train': dataset_split['train'],
-        'test': dataset_split['test']
-    })
+    elif split_type == "train_test":
+        # Create train/test split (90/10 by default)
+        print("Creating train/test split...")
+        dataset_split = dataset.train_test_split(test_size=0.1, seed=42)
+        dataset_dict = DatasetDict({
+            'train': dataset_split['train'],
+            'test': dataset_split['test']
+        })
+        print(f"Train set: {len(dataset_dict['train'])} examples")
+        print(f"Test set: {len(dataset_dict['test'])} examples")
 
-    print(f"Train set: {len(dataset_dict['train'])} examples")
-    print(f"Test set: {len(dataset_dict['test'])} examples")
+    elif split_type == "train_val_test":
+        # Create train/validation/test split (80/10/10)
+        print("Creating train/validation/test split...")
+        train_val = dataset.train_test_split(test_size=0.2, seed=42)
+        val_test = train_val['test'].train_test_split(test_size=0.5, seed=42)
+        dataset_dict = DatasetDict({
+            'train': train_val['train'],
+            'validation': val_test['train'],
+            'test': val_test['test']
+        })
+        print(f"Train set: {len(dataset_dict['train'])} examples")
+        print(f"Validation set: {len(dataset_dict['validation'])} examples")
+        print(f"Test set: {len(dataset_dict['test'])} examples")
+
+    else:
+        raise ValueError(f"Invalid split_type: {split_type}. Must be 'train_only', 'train_test', or 'train_val_test'")
 
     # Save locally first
     local_save_path = f"./{repo_name.split('/')[-1]}_local"
@@ -123,6 +148,9 @@ def main():
                         help='Push dataset to HuggingFace Hub')
     parser.add_argument('--repo-name', default='yosubshin/WaltonMultimodalColdStart-hard',
                         help='Repository name on HuggingFace Hub')
+    parser.add_argument('--split-type', default='train_only',
+                        choices=['train_only', 'train_test', 'train_val_test'],
+                        help='Type of dataset split (default: train_only)')
 
     args = parser.parse_args()
 
@@ -130,7 +158,8 @@ def main():
     dataset = create_walton_dataset_from_tsv(
         args.tsv_file,
         push_to_hub=args.push,
-        repo_name=args.repo_name
+        repo_name=args.repo_name,
+        split_type=args.split_type
     )
 
     # Print some examples
