@@ -12,7 +12,10 @@ import argparse
 import os
 
 
-def create_walton_dataset_from_tsv(tsv_path, push_to_hub=False, repo_name="yosubshin/WaltonMultimodalColdStart-hard", split_type="train_only"):
+def create_walton_dataset_from_tsv(tsv_path, push_to_hub=False, repo_name="yosubshin/WaltonMultimodalColdStart-hard",
+                                  split_type="train_only",
+                                  input_question_col="question", input_answer_col="answer",
+                                  output_question_col="problem", output_answer_col="solution"):
     """
     Create a HuggingFace dataset from TSV file with base64 images.
 
@@ -21,6 +24,10 @@ def create_walton_dataset_from_tsv(tsv_path, push_to_hub=False, repo_name="yosub
         push_to_hub: Whether to push the dataset to HuggingFace Hub
         repo_name: Repository name on HuggingFace Hub
         split_type: Type of split - "train_only", "train_test", or "train_val_test"
+        input_question_col: Name of the question column in input TSV (default: "question")
+        input_answer_col: Name of the answer column in input TSV (default: "answer")
+        output_question_col: Name of the question column in output dataset (default: "problem")
+        output_answer_col: Name of the answer column in output dataset (default: "solution")
     """
     print(f"Reading TSV from {tsv_path}...")
     df = pd.read_csv(tsv_path, sep='\t')
@@ -53,25 +60,29 @@ def create_walton_dataset_from_tsv(tsv_path, push_to_hub=False, repo_name="yosub
     # Filter dataframe to only include valid rows
     df_valid = df.iloc[valid_indices].reset_index(drop=True)
 
-    # Extract problems and solutions from question and answer columns
-    # The 'question' column contains the problem statement
-    # The 'answer' column contains the solution
-    problems = df_valid['question'].tolist()
-    solutions = df_valid['answer'].tolist()
+    # Check if input columns exist
+    if input_question_col not in df_valid.columns:
+        raise ValueError(f"Input question column '{input_question_col}' not found in TSV. Available columns: {list(df_valid.columns)}")
+    if input_answer_col not in df_valid.columns:
+        raise ValueError(f"Input answer column '{input_answer_col}' not found in TSV. Available columns: {list(df_valid.columns)}")
 
-    # Define the dataset features (schema)
+    # Extract questions and answers using configurable column names
+    questions = df_valid[input_question_col].tolist()
+    answers = df_valid[input_answer_col].tolist()
+
+    # Define the dataset features (schema) with configurable output column names
     features = Features({
         'image': Image(),  # HuggingFace will handle PIL images
-        'problem': Value('string'),
-        'solution': Value('string')
+        output_question_col: Value('string'),
+        output_answer_col: Value('string')
     })
 
     # Create the dataset
-    print("Creating HuggingFace dataset...")
+    print(f"Creating HuggingFace dataset with columns: image, {output_question_col}, {output_answer_col}")
     dataset_dict = {
         'image': images,
-        'problem': problems,
-        'solution': solutions
+        output_question_col: questions,
+        output_answer_col: answers
     }
 
     dataset = Dataset.from_dict(dataset_dict, features=features)
@@ -152,6 +163,16 @@ def main():
                         choices=['train_only', 'train_test', 'train_val_test'],
                         help='Type of dataset split (default: train_only)')
 
+    # Column name configuration
+    parser.add_argument('--input-question-col', default='question',
+                        help='Name of the question column in input TSV (default: question)')
+    parser.add_argument('--input-answer-col', default='answer',
+                        help='Name of the answer column in input TSV (default: answer)')
+    parser.add_argument('--output-question-col', default='problem',
+                        help='Name of the question column in output dataset (default: problem)')
+    parser.add_argument('--output-answer-col', default='solution',
+                        help='Name of the answer column in output dataset (default: solution)')
+
     args = parser.parse_args()
 
     # Create the dataset
@@ -159,15 +180,26 @@ def main():
         args.tsv_file,
         push_to_hub=args.push,
         repo_name=args.repo_name,
-        split_type=args.split_type
+        split_type=args.split_type,
+        input_question_col=args.input_question_col,
+        input_answer_col=args.input_answer_col,
+        output_question_col=args.output_question_col,
+        output_answer_col=args.output_answer_col
     )
 
     # Print some examples
     print("\n" + "="*50)
     print("Sample from train set:")
     sample = dataset['train'][0]
-    print(f"Problem (first 200 chars): {sample['problem'][:200]}...")
-    print(f"Solution (first 200 chars): {sample['solution'][:200]}...")
+
+    # Use the configured output column names
+    question_col = args.output_question_col
+    answer_col = args.output_answer_col
+
+    if question_col in sample:
+        print(f"{question_col} (first 200 chars): {str(sample[question_col])[:200]}...")
+    if answer_col in sample:
+        print(f"{answer_col} (first 200 chars): {str(sample[answer_col])[:200]}...")
     print(f"Image type: {type(sample['image'])}")
     print(f"Image size: {sample['image'].size if hasattr(sample['image'], 'size') else 'N/A'}")
 
