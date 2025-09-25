@@ -87,9 +87,9 @@ def create_walton_dataset_from_tsv(tsv_path, push_to_hub=False, repo_name="yosub
         print(f"Train set: {len(dataset_dict['train'])} examples")
 
     elif split_type == "train_test":
-        # Create train/test split (90/10 by default)
+        # Create train/test split (50/50 by default)
         print("Creating train/test split...")
-        dataset_split = dataset.train_test_split(test_size=0.1, seed=42)
+        dataset_split = dataset.train_test_split(test_size=0.5, seed=42)
         dataset_dict = DatasetDict({
             'train': dataset_split['train'],
             'test': dataset_split['test']
