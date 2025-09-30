@@ -18,6 +18,34 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 
+def is_empty_image(img, white_threshold=250):
+    """
+    Check if an image is empty (white background).
+
+    Args:
+        img: PIL Image object
+        white_threshold: Minimum average value per channel to consider white (0-255)
+
+    Returns:
+        bool: True if image appears to be white/empty
+    """
+    # Convert to RGB if necessary
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+
+    # Convert to numpy array
+    img_array = np.array(img)
+
+    # Calculate mean color across all pixels
+    mean_color = img_array.mean(axis=(0, 1))
+
+    # Check if all RGB channels are close to white (255)
+    if np.all(mean_color > white_threshold):
+        return True
+
+    return False
+
+
 def resize_image_preserve_aspect(img, max_width=768, max_height=None):
     """
     Resize image to maximum width while preserving aspect ratio.
@@ -97,11 +125,15 @@ def plot_size_histogram(original_sizes, resized_sizes, output_path):
     """Plot histogram comparing original and resized image dimensions."""
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
-    # Extract widths and heights
-    orig_widths = [s[0] for s in original_sizes]
-    orig_heights = [s[1] for s in original_sizes]
-    resized_widths = [s[0] for s in resized_sizes]
-    resized_heights = [s[1] for s in resized_sizes]
+    # Filter out (0,0) placeholders for empty/error images
+    valid_original = [(w, h) for w, h in original_sizes if w > 0 and h > 0]
+    valid_resized = [(w, h) for w, h in resized_sizes if w > 0 and h > 0]
+
+    # Extract widths and heights from valid images only
+    orig_widths = [s[0] for s in valid_original] if valid_original else [0]
+    orig_heights = [s[1] for s in valid_original] if valid_original else [0]
+    resized_widths = [s[0] for s in valid_resized] if valid_resized else [0]
+    resized_heights = [s[1] for s in valid_resized] if valid_resized else [0]
 
     # Width comparison
     ax = axes[0, 0]
@@ -122,9 +154,9 @@ def plot_size_histogram(original_sizes, resized_sizes, output_path):
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Aspect ratio comparison
-    orig_aspects = [w/h if h > 0 else 0 for w, h in original_sizes]
-    resized_aspects = [w/h if h > 0 else 0 for w, h in resized_sizes]
+    # Aspect ratio comparison (use valid images only)
+    orig_aspects = [w/h for w, h in valid_original if h > 0] if valid_original else [0]
+    resized_aspects = [w/h for w, h in valid_resized if h > 0] if valid_resized else [0]
 
     ax = axes[1, 0]
     ax.hist([orig_aspects, resized_aspects], bins=30, label=['Original', 'Resized'], alpha=0.7)
@@ -136,22 +168,29 @@ def plot_size_histogram(original_sizes, resized_sizes, output_path):
 
     # Size reduction scatter plot
     ax = axes[1, 1]
-    orig_pixels = [w*h for w, h in original_sizes]
-    resized_pixels = [w*h for w, h in resized_sizes]
+    # Use valid images only and ensure same length
+    paired_sizes = [(o, r) for o, r in zip(original_sizes, resized_sizes) if o[0] > 0 and o[1] > 0 and r[0] > 0 and r[1] > 0]
 
-    # Only plot images that were actually resized
-    resized_indices = [i for i in range(len(orig_pixels)) if orig_pixels[i] != resized_pixels[i]]
-    if resized_indices:
-        orig_subset = [orig_pixels[i] for i in resized_indices]
-        resized_subset = [resized_pixels[i] for i in resized_indices]
+    if paired_sizes:
+        orig_pixels = [o[0]*o[1] for o, r in paired_sizes]
+        resized_pixels = [r[0]*r[1] for o, r in paired_sizes]
 
-        ax.scatter(orig_subset, resized_subset, alpha=0.5, s=10)
-        ax.plot([0, max(orig_pixels)], [0, max(orig_pixels)], 'r--', label='No change')
-        ax.set_xlabel('Original Size (pixels²)')
-        ax.set_ylabel('Resized Size (pixels²)')
-        ax.set_title(f'Size Reduction ({len(resized_indices)} images resized)')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+        # Only plot images that were actually resized
+        resized_indices = [i for i in range(len(orig_pixels)) if orig_pixels[i] != resized_pixels[i]]
+        if resized_indices:
+            orig_subset = [orig_pixels[i] for i in resized_indices]
+            resized_subset = [resized_pixels[i] for i in resized_indices]
+
+            ax.scatter(orig_subset, resized_subset, alpha=0.5, s=10)
+            ax.plot([0, max(orig_pixels)], [0, max(orig_pixels)], 'r--', label='No change')
+            ax.set_xlabel('Original Size (pixels²)')
+            ax.set_ylabel('Resized Size (pixels²)')
+            ax.set_title(f'Size Reduction ({len(resized_indices)} images resized)')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        else:
+            ax.text(0.5, 0.5, 'No images were resized', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title('Size Reduction')
     else:
         ax.text(0.5, 0.5, 'No images were resized', ha='center', va='center', transform=ax.transAxes)
         ax.set_title('Size Reduction')
@@ -170,7 +209,7 @@ def plot_size_histogram(original_sizes, resized_sizes, output_path):
 
 
 def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
-                        format='PNG', quality=95, show_histogram=True):
+                        format='PNG', quality=95, show_histogram=True, skip_empty=False):
     """
     Resize images in TSV file to maximum dimensions.
 
@@ -182,6 +221,7 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
         format: Output image format ('PNG' or 'JPEG')
         quality: JPEG quality (1-100)
         show_histogram: Whether to generate size distribution histogram
+        skip_empty: Whether to skip empty/blank images
     """
     # Read the input TSV
     print(f"Reading TSV from {tsv_path}...")
@@ -196,6 +236,8 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
 
     # Process images
     print(f"\nProcessing images (max width: {max_width}px, max height: {max_height or 'unlimited'}px)...")
+    if skip_empty:
+        print("Empty/blank image detection is enabled")
 
     original_sizes = []
     resized_sizes = []
@@ -203,12 +245,11 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
     resized_bytes = []
     resize_count = 0
     error_count = 0
-
-    # Create a copy of the dataframe for modifications
-    df_output = df.copy()
+    empty_count = 0
+    rows_to_keep = []
 
     # Process each row with progress bar
-    for idx in tqdm(range(len(df)), desc="Resizing images"):
+    for idx in tqdm(range(len(df)), desc="Processing images"):
         row = df.iloc[idx]
         base64_str = row['image']
 
@@ -222,6 +263,15 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
                 original_size = img.size
                 original_sizes.append(original_size)
 
+                # Check if image is empty
+                if skip_empty and is_empty_image(img):
+                    empty_count += 1
+                    # Skip this row - don't add to rows_to_keep
+                    # Add placeholder for sizes to keep lists aligned
+                    resized_sizes.append((0, 0))
+                    resized_bytes.append(0)
+                    continue
+
                 # Resize if needed
                 img_resized, was_resized = resize_image_preserve_aspect(img, max_width, max_height)
                 resized_sizes.append(img_resized.size)
@@ -233,23 +283,36 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
                 new_base64 = encode_image_to_base64(img_resized, format=format, quality=quality)
                 resized_bytes.append(len(base64.b64decode(new_base64)))
 
-                # Update the dataframe
-                df_output.at[idx, 'image'] = new_base64
+                # Update the image in the row
+                df.at[idx, 'image'] = new_base64
+                rows_to_keep.append(idx)
 
             except Exception as e:
                 print(f"\nError processing image at index {row.get('index', idx)}: {e}")
                 error_count += 1
-                # Keep original on error
+                # Keep original on error (unless skip_empty is true)
+                if not skip_empty:
+                    rows_to_keep.append(idx)
                 original_sizes.append((0, 0))
                 resized_sizes.append((0, 0))
                 original_bytes.append(0)
                 resized_bytes.append(0)
         else:
-            # No image data
+            # No image data - skip if skip_empty is true
+            if skip_empty:
+                empty_count += 1
+            else:
+                rows_to_keep.append(idx)
             original_sizes.append((0, 0))
             resized_sizes.append((0, 0))
             original_bytes.append(0)
             resized_bytes.append(0)
+
+    # Filter dataframe to only keep non-empty images if skip_empty is enabled
+    if skip_empty:
+        df_output = df.iloc[rows_to_keep].reset_index(drop=True)
+    else:
+        df_output = df.copy()
 
     # Calculate statistics
     print("\n" + "="*60)
@@ -268,6 +331,8 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
 
         print(f"\nTotal images processed: {len(valid_originals)}")
         print(f"Images resized: {resize_count} ({resize_count/len(valid_originals)*100:.1f}%)")
+        if skip_empty:
+            print(f"Empty/blank images removed: {empty_count}")
         print(f"Processing errors: {error_count}")
 
         print(f"\nOriginal dimensions:")
@@ -316,6 +381,8 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
 
     print("\n✅ Image transformation completed successfully!")
     print("   Resized images preserve aspect ratios while staying within specified limits.")
+    if skip_empty:
+        print("   Empty/white images have been removed from the dataset.")
     print("   This optimization reduces memory usage and improves training efficiency.")
 
     return df_output
@@ -338,6 +405,9 @@ Examples:
 
   # Use JPEG format for smaller file sizes
   python resize_images_in_tsv.py input.tsv output.tsv --format JPEG --quality 90
+
+  # Remove empty/blank images from dataset
+  python resize_images_in_tsv.py input.tsv output.tsv --skip-empty
         """
     )
 
@@ -353,6 +423,8 @@ Examples:
                        help='JPEG quality 1-100 (default: 95, only for JPEG format)')
     parser.add_argument('--no-histogram', action='store_true',
                        help='Skip generating size distribution histogram')
+    parser.add_argument('--skip-empty', action='store_true',
+                       help='Remove empty/blank images (white backgrounds)')
 
     args = parser.parse_args()
 
@@ -377,7 +449,8 @@ Examples:
             max_height=args.max_height,
             format=args.format,
             quality=args.quality,
-            show_histogram=not args.no_histogram
+            show_histogram=not args.no_histogram,
+            skip_empty=args.skip_empty
         )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
