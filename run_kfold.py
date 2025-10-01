@@ -50,8 +50,23 @@ Usage:
 
     # API Kwargs
     parser.add_argument('--nproc', type=int, default=4, help='Parallel API calling')
+    parser.add_argument('--api-nproc', type=int, default=4, help='Parallel API calling (alias for nproc)')
     parser.add_argument('--retry', type=int, default=None, help='retry numbers for API VLMs')
     parser.add_argument('--judge', type=str, default='gpt-4o-mini', help='Judge model name')
+
+    # Model and Generation Settings
+    parser.add_argument('--pass-custom-model', type=str, default=None,
+                        help='Path to a HuggingFace repository or local model directory')
+    parser.add_argument('--use-vllm', action='store_true',
+                        help='Use VLLM for generation (faster inference)')
+    parser.add_argument('--batch-size', type=int, default=None,
+                        help='Batch size for VLLM inference')
+    parser.add_argument('--max-output-tokens', type=int, default=None,
+                        help='Maximum output tokens for generation')
+
+    # Resume/Reuse Settings
+    parser.add_argument('--reuse', action='store_true',
+                        help='Reuse existing prediction files')
 
     # Logging Utils
     parser.add_argument('--verbose', action='store_true')
@@ -74,8 +89,12 @@ Usage:
         print("ERROR: K must be at least 2 for meaningful k-fold inference")
         sys.exit(1)
 
-    if not args.data or not args.model:
-        print("ERROR: Both --data and --model are required")
+    if not args.data:
+        print("ERROR: --data is required")
+        sys.exit(1)
+
+    if not args.model and not args.pass_custom_model:
+        print("ERROR: Either --model or --pass-custom-model must be specified")
         sys.exit(1)
 
     return args
@@ -102,7 +121,7 @@ def build_model(model_name, **kwargs):
 
 
 def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
-                work_dir='./outputs', verbose=False):
+                work_dir='./outputs', verbose=False, reuse=False):
     """
     Run k-fold inference on a dataset.
 
@@ -115,6 +134,7 @@ def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
         seed_base: Base seed for reproducibility
         work_dir: Directory to save outputs
         verbose: Whether to print verbose output
+        reuse: Whether to reuse existing results
 
     Returns:
         dict: Results with k predictions per index
@@ -132,9 +152,23 @@ def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
     output_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}.pkl')
 
     # Load existing results if any (for resumption)
-    if osp.exists(output_file):
+    if osp.exists(output_file) and reuse:
+        logger.info(f"Reusing existing results from {output_file}")
+        results = load(output_file)
+
+        # If all results are complete, return them
+        data = dataset.data
+        all_complete = all(
+            results.get(row['index'], {}).get('predictions', None) is not None and
+            len(results.get(row['index'], {}).get('predictions', [])) == k
+            for _, row in data.iterrows()
+        )
+        if all_complete:
+            logger.info("All results are complete, skipping inference")
+            return results
+    elif osp.exists(output_file):
         if verbose:
-            logger.info(f"Loading existing results from {output_file}")
+            logger.info(f"Loading existing results from {output_file} for resumption")
         results = load(output_file)
     else:
         results = {}
@@ -348,8 +382,17 @@ def main():
     work_dir = args.work_dir if args.work_dir else './outputs'
     os.makedirs(work_dir, exist_ok=True)
 
-    # Get full model and dataset names
-    model_name = args.model
+    # Handle custom model or regular model
+    if args.pass_custom_model:
+        model_name = args.pass_custom_model
+        use_custom_model = True
+    elif args.model:
+        model_name = args.model
+        use_custom_model = False
+    else:
+        print("ERROR: Either --model or --pass-custom-model must be specified")
+        sys.exit(1)
+
     dataset_names = args.data
 
     # Convert single dataset to list
@@ -360,17 +403,48 @@ def main():
     logger.info(f"Starting k-fold inference with k={args.k}")
     logger.info(f"Model: {model_name}")
     logger.info(f"Datasets: {dataset_names}")
+    if args.use_vllm:
+        logger.info("Using VLLM for acceleration")
 
-    # Build model
+    # Build model kwargs
     model_kwargs = {}
     if args.verbose:
         model_kwargs['verbose'] = True
+    if args.retry:
+        model_kwargs['retry'] = args.retry
+    if args.use_vllm:
+        model_kwargs['use_vllm'] = True
+    if args.batch_size:
+        model_kwargs['batch_size'] = args.batch_size
+    if args.max_output_tokens:
+        model_kwargs['max_output_tokens'] = args.max_output_tokens
     if args.temperature:
         model_kwargs['temperature'] = args.temperature
     if args.top_p:
         model_kwargs['top_p'] = args.top_p
 
-    model = build_model(model_name, **model_kwargs)
+    # Handle nproc/api-nproc
+    nproc = args.api_nproc if args.api_nproc else args.nproc
+    if nproc:
+        model_kwargs['nproc'] = nproc
+
+    # Build the model
+    if use_custom_model:
+        # For custom models, use the model detection system
+        try:
+            from vlmeval.utils.model_detection import register_custom_model
+            custom_model_name = register_custom_model(model_name)
+            logger.info(f'Successfully registered custom model: {custom_model_name} -> {model_name}')
+            model = build_model(custom_model_name, **model_kwargs)
+        except Exception as e:
+            logger.error(f'Failed to register custom model {model_name}: {e}')
+            logger.error('Please check that the model path is valid and the model architecture is supported.')
+            logger.error('Supported architectures include: qwen2_vl, qwen_vl, llava, internvl, minicpm, phi, molmo, '
+                         'aria, pixtral, smolvlm, idefics, cogvlm, deepseek, llama-vision, gemma, vila, ovis, '
+                         'bunny, cambrian, mantis, moondream')
+            sys.exit(1)
+    else:
+        model = build_model(model_name, **model_kwargs)
 
     # Process each dataset
     for dataset_name in dataset_names:
@@ -388,7 +462,8 @@ def main():
             top_p=args.top_p,
             seed_base=args.seed_base,
             work_dir=work_dir,
-            verbose=args.verbose
+            verbose=args.verbose,
+            reuse=args.reuse
         )
 
         # Convert to DataFrame
@@ -401,9 +476,11 @@ def main():
 
         # Evaluate if judge is available
         if hasattr(dataset, 'evaluate'):
+            # Handle nproc/api-nproc
+            eval_nproc = args.api_nproc if args.api_nproc else args.nproc
             judge_kwargs = {
                 'model': args.judge if args.judge else 'gpt-4o-mini',
-                'nproc': args.nproc,
+                'nproc': eval_nproc,
                 'verbose': args.verbose
             }
 
