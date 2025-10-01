@@ -13,6 +13,7 @@ Usage:
 import os
 import sys
 import torch
+import argparse
 import warnings
 import pandas as pd
 from tqdm import tqdm
@@ -23,15 +24,40 @@ from uuid import uuid4
 from vlmeval import *
 from vlmeval.dataset import build_dataset
 from vlmeval.config import supported_VLM
-from vlmeval.utils.arguments import build_parser
 from vlmeval.smp import *
 
 
 def parse_args():
     """Parse command line arguments for k-fold inference."""
-    parser = build_parser()
+    help_msg = """
+K-fold inference script for VLMEvalKit.
 
-    # Add k-fold specific arguments
+This script runs inference k times for each prompt to assess question difficulty
+and reliability. Each prompt gets k different responses which are evaluated
+individually, then aggregated with a verdict_sum.
+
+Usage:
+    python run_kfold.py --data WaltonMultimodalReasoning --model qwen2_vl --k 8
+"""
+    parser = argparse.ArgumentParser(description=help_msg, formatter_class=argparse.RawTextHelpFormatter)
+
+    # Essential Args
+    parser.add_argument('--data', type=str, nargs='+', help='Names of Datasets')
+    parser.add_argument('--model', type=str, help='Name of Model')
+
+    # Work Dir
+    parser.add_argument('--work-dir', type=str, default='./outputs', help='select the output directory')
+
+    # API Kwargs
+    parser.add_argument('--nproc', type=int, default=4, help='Parallel API calling')
+    parser.add_argument('--retry', type=int, default=None, help='retry numbers for API VLMs')
+    parser.add_argument('--judge', type=str, default='gpt-4o-mini', help='Judge model name')
+
+    # Logging Utils
+    parser.add_argument('--verbose', action='store_true')
+    parser.add_argument('--no-warning', action='store_true', help='Disable warnings')
+
+    # K-fold specific arguments
     parser.add_argument('--k', type=int, default=8,
                         help='Number of times to run inference per prompt (default: 8)')
     parser.add_argument('--temperature', type=float, default=0.7,
@@ -45,7 +71,11 @@ def parse_args():
 
     # Validate arguments
     if args.k < 2:
-        logger.error("K must be at least 2 for meaningful k-fold inference")
+        print("ERROR: K must be at least 2 for meaningful k-fold inference")
+        sys.exit(1)
+
+    if not args.data or not args.model:
+        print("ERROR: Both --data and --model are required")
         sys.exit(1)
 
     return args
@@ -53,6 +83,8 @@ def parse_args():
 
 def build_model(model_name, **kwargs):
     """Build and return the model for inference."""
+    logger = get_logger('RUN_KFold')
+
     if model_name in supported_VLM:
         model_cls = supported_VLM[model_name]
         model = model_cls(**kwargs)
@@ -87,6 +119,7 @@ def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
     Returns:
         dict: Results with k predictions per index
     """
+    logger = get_logger('RUN_KFold')
     dataset_name = dataset.dataset_name
     model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
 
@@ -100,7 +133,8 @@ def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
 
     # Load existing results if any (for resumption)
     if osp.exists(output_file):
-        logger.info(f"Loading existing results from {output_file}")
+        if verbose:
+            logger.info(f"Loading existing results from {output_file}")
         results = load(output_file)
     else:
         results = {}
@@ -112,7 +146,7 @@ def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
     # Progress bar for overall completion
     pbar = tqdm(total=total_items, desc=f'K-fold Inference (k={k})')
 
-    for idx_num, row in data.iterrows():
+    for _, row in data.iterrows():
         index = row['index']
 
         # Skip if already completed
@@ -242,6 +276,7 @@ def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', **judge_kwa
     Returns:
         pd.DataFrame: DataFrame with verdicts for each prediction
     """
+    logger = get_logger('RUN_KFold')
     dataset_name = dataset.dataset_name
     logger.info(f"Evaluating k-fold predictions for {dataset_name}")
 
@@ -272,10 +307,12 @@ def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', **judge_kwa
                 if 'verdict' in eval_result.columns:
                     results[verdict_col] = eval_result['verdict'].values
                 else:
-                    logger.warning(f"No verdict column found for prediction {i+1}")
+                    if judge_kwargs.get('verbose', False):
+                        logger.warning(f"No verdict column found for prediction {i+1}")
                     results[verdict_col] = 0
             else:
-                logger.warning(f"Unexpected evaluation result format for prediction {i+1}")
+                if judge_kwargs.get('verbose', False):
+                    logger.warning(f"Unexpected evaluation result format for prediction {i+1}")
                 results[verdict_col] = 0
 
         finally:
@@ -294,7 +331,7 @@ def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', **judge_kwa
                                    labels=['hard', 'medium', 'easy'])
 
     logger.info(f"Evaluation complete. Verdict distribution:")
-    logger.info(f"{results['verdict_sum'].value_counts().sort_index()}")
+    logger.info(f"\n{results['verdict_sum'].value_counts().sort_index()}")
 
     return results
 
