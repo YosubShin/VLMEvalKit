@@ -346,6 +346,29 @@ class HFChatModel:
 
         return response, offset
 
+    def working(self):
+        """Check if the HF model is working properly.
+
+        Returns:
+            bool: True if the model is working, False otherwise.
+        """
+        try:
+            # Try a simple generation to test if model is loaded and working
+            test_prompt = "Hello, how are you?"
+            response = self.generate_str(test_prompt, max_new_tokens=10)
+
+            # Check if we got a non-empty response
+            if response is not None and response != '' and isinstance(response, str):
+                self.logger.info(f"Model {self.model_path} is working properly")
+                return True
+            else:
+                self.logger.warning(f"Model {self.model_path} returned empty or invalid response")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"Model {self.model_path} failed working check: {type(e)}: {e}")
+            return False
+
     def generate(self, inputs, **kwargs):
         if isinstance(inputs, str):
             return self.generate_str(inputs, **kwargs)
