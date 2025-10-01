@@ -39,7 +39,7 @@ tqdm
 transformers
 typing_extensions
 validators
-vllm>=0.6.4,<=0.8.3
+vllm>=0.6.4,<=0.8.4
 wandb
 xlsxwriter
 
