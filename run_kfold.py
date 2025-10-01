@@ -293,14 +293,14 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
             if ready_batch:
                 # Process the ready batch
                 if verbose:
-                    logger.info(f"Processing batch of {len(ready_batch['indices'])} k-iterations")
+                    logger.info(f"Processing batch of {len(ready_batch)} k-iterations")
 
                 batch_results = processor.process_batch(ready_batch)
 
-                # Store results
-                for batch_idx, response in batch_results.items():
+                # Store results (batch_results is a list of (index, response) tuples)
+                for batch_idx, response in batch_results:
                     # Parse the batch_idx to get original index and k_iter
-                    parts = batch_idx.split('_k')
+                    parts = str(batch_idx).split('_k')
                     if len(parts) == 2:
                         orig_index = parts[0]
                         iter_num = int(parts[1])
@@ -334,14 +334,14 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
     final_batch = collector.force_batch()
     if final_batch:
         if verbose:
-            logger.info(f"Processing final batch of {len(final_batch['indices'])} k-iterations")
+            logger.info(f"Processing final batch of {len(final_batch)} k-iterations")
 
         batch_results = processor.process_batch(final_batch)
 
-        # Store results
-        for batch_idx, response in batch_results.items():
+        # Store results (batch_results is a list of (index, response) tuples)
+        for batch_idx, response in batch_results:
             # Parse the batch_idx to get original index and k_iter
-            parts = batch_idx.split('_k')
+            parts = str(batch_idx).split('_k')
             if len(parts) == 2:
                 orig_index = parts[0]
                 iter_num = int(parts[1])
