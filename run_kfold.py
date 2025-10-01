@@ -120,6 +120,228 @@ def build_model(model_name, **kwargs):
         raise ValueError(f"Model {model_name} not supported")
 
 
+def infer_kfold_batch(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
+                      work_dir='./outputs', verbose=False, reuse=False, batch_size=None):
+    """
+    Run k-fold inference with batch processing optimization.
+
+    When batch_size is provided and the model supports batch processing,
+    we can run multiple k-iterations across different prompts in a single batch.
+    For example, with batch_size=32 and k=8, we can process 4 prompts simultaneously
+    (each prompt gets 8 iterations = 32 total).
+
+    Args:
+        model: The VLM model to use
+        dataset: The dataset to evaluate
+        k: Number of inference iterations per prompt
+        temperature: Temperature for sampling
+        top_p: Top-p for nucleus sampling
+        seed_base: Base seed for reproducibility
+        work_dir: Directory to save outputs
+        verbose: Whether to print verbose output
+        reuse: Whether to reuse existing results
+        batch_size: Batch size for inference (enables batch k-fold if set)
+
+    Returns:
+        dict: Results with k predictions per index
+    """
+    logger = get_logger('RUN_KFold')
+
+    # Check if batch processing is available and should be used
+    if batch_size and hasattr(model, 'supports_batch_processing') and model.supports_batch_processing():
+        logger.info(f"Using batch k-fold inference with batch_size={batch_size}, k={k}")
+
+        # Calculate how many prompts can fit in a batch
+        prompts_per_batch = batch_size // k
+        if prompts_per_batch < 1:
+            logger.warning(f"Batch size {batch_size} is smaller than k={k}, falling back to regular k-fold")
+            return infer_kfold(model, dataset, k, temperature, top_p, seed_base,
+                             work_dir, verbose, reuse)
+
+        logger.info(f"Processing {prompts_per_batch} prompts per batch ({prompts_per_batch} * {k} = {batch_size})")
+        return _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
+                                   temperature, top_p, seed_base, work_dir, verbose, reuse)
+    else:
+        # Fall back to regular k-fold
+        if batch_size:
+            logger.info("Model does not support batch processing, using sequential k-fold")
+        return infer_kfold(model, dataset, k, temperature, top_p, seed_base,
+                         work_dir, verbose, reuse)
+
+
+def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
+                        temperature, top_p, seed_base, work_dir, verbose, reuse):
+    """
+    Internal function for batched k-fold inference.
+    """
+    logger = get_logger('RUN_KFold')
+    dataset_name = dataset.dataset_name
+    model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
+
+    logger.info(f"Starting batched k-fold inference with k={k}, batch_size={batch_size}")
+    logger.info(f"Model: {model_name}, Dataset: {dataset_name}")
+    logger.info(f"Temperature: {temperature}, Top-p: {top_p}")
+    logger.info(f"Processing {prompts_per_batch} prompts per batch")
+
+    # Prepare output file
+    os.makedirs(work_dir, exist_ok=True)
+    output_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}.pkl')
+
+    # Load existing results if reusing
+    if osp.exists(output_file) and reuse:
+        logger.info(f"Reusing existing results from {output_file}")
+        results = load(output_file)
+
+        # Check if all complete
+        data = dataset.data
+        all_complete = all(
+            results.get(row['index'], {}).get('predictions', None) is not None and
+            len(results.get(row['index'], {}).get('predictions', [])) == k
+            for _, row in data.iterrows()
+        )
+        if all_complete:
+            logger.info("All results are complete, skipping inference")
+            return results
+    elif osp.exists(output_file):
+        if verbose:
+            logger.info(f"Loading existing results from {output_file} for resumption")
+        results = load(output_file)
+    else:
+        results = {}
+
+    # Get dataset data
+    data = dataset.data
+    total_items = len(data)
+
+    # Collect items that need processing
+    items_to_process = []
+    for _, row in data.iterrows():
+        index = row['index']
+        if index not in results or len(results.get(index, {}).get('predictions', [])) < k:
+            items_to_process.append(row)
+
+    logger.info(f"Items to process: {len(items_to_process)}/{total_items}")
+
+    # Process in batches
+    from tqdm import tqdm
+    pbar = tqdm(total=len(items_to_process), desc=f'Batched K-fold (k={k}, batch={batch_size})')
+
+    for batch_start in range(0, len(items_to_process), prompts_per_batch):
+        batch_end = min(batch_start + prompts_per_batch, len(items_to_process))
+        batch_items = items_to_process[batch_start:batch_end]
+
+        # Prepare batch messages - each prompt repeated k times
+        batch_messages = []
+        batch_metadata = []  # Track which prompt and k-iteration each message corresponds to
+
+        for item in batch_items:
+            index = item['index']
+
+            # Initialize result if needed
+            if index not in results:
+                results[index] = {
+                    'index': index,
+                    'question': item.get('question', ''),
+                    'answer': item.get('answer', ''),
+                    'predictions': [],
+                    'metadata': {
+                        'temperatures': [],
+                        'seeds': [],
+                        'top_p_values': []
+                    }
+                }
+
+            # Build prompt
+            if hasattr(model, 'use_custom_prompt') and model.use_custom_prompt(dataset_name):
+                prompt_struct = model.build_prompt(item, dataset=dataset_name)
+            else:
+                prompt_struct = dataset.build_prompt(item)
+
+            # Add k copies of this prompt to the batch
+            existing_preds = len(results[index]['predictions'])
+            for k_iter in range(existing_preds, k):
+                batch_messages.append(prompt_struct)
+                batch_metadata.append({
+                    'index': index,
+                    'k_iter': k_iter,
+                    'seed': seed_base + k_iter
+                })
+
+        # If batch is not full, we still process what we have
+        if len(batch_messages) > 0:
+            try:
+                # Set seeds for the batch
+                seeds = [meta['seed'] for meta in batch_metadata]
+                if torch.cuda.is_available():
+                    # Set different seeds for different samples
+                    torch.cuda.manual_seed(seeds[0] if seeds else seed_base)
+                torch.manual_seed(seeds[0] if seeds else seed_base)
+
+                # Generate batch predictions
+                if hasattr(model, 'generate_batch_vllm'):
+                    # Use VLLM batch generation
+                    batch_responses = model.generate_batch_vllm(
+                        batch_messages,
+                        dataset=dataset_name,
+                        temperature=temperature,
+                        top_p=top_p,
+                        batch_size=len(batch_messages)
+                    )
+                else:
+                    # Use regular batch generation if available
+                    batch_responses = model.generate_batch(
+                        batch_messages,
+                        dataset=dataset_name,
+                        temperature=temperature,
+                        top_p=top_p
+                    )
+
+                # Process responses and store in results
+                for response, meta in zip(batch_responses, batch_metadata):
+                    index = meta['index']
+                    results[index]['predictions'].append(response)
+                    results[index]['metadata']['temperatures'].append(temperature)
+                    results[index]['metadata']['seeds'].append(meta['seed'])
+                    results[index]['metadata']['top_p_values'].append(top_p)
+
+                    if verbose and meta['k_iter'] == 0:
+                        logger.info(f"Index {index} - First response: {response[:100]}...")
+
+            except Exception as e:
+                logger.error(f"Error in batch inference: {e}")
+                # Fall back to sequential processing for this batch
+                for msg, meta in zip(batch_messages, batch_metadata):
+                    try:
+                        response = model.generate(msg, dataset=dataset_name)
+                        index = meta['index']
+                        results[index]['predictions'].append(response)
+                        results[index]['metadata']['temperatures'].append(temperature)
+                        results[index]['metadata']['seeds'].append(meta['seed'])
+                        results[index]['metadata']['top_p_values'].append(top_p)
+                    except Exception as e2:
+                        logger.error(f"Error processing index {meta['index']}: {e2}")
+
+            # Clear GPU cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        pbar.update(len(batch_items))
+
+        # Save progress periodically
+        if (batch_end % (prompts_per_batch * 5)) == 0 or batch_end == len(items_to_process):
+            dump(results, output_file)
+            if verbose:
+                logger.info(f"Saved checkpoint at {batch_end}/{len(items_to_process)} items")
+
+    pbar.close()
+
+    # Final save
+    dump(results, output_file)
+    logger.info(f"Batched k-fold inference complete. Results saved to {output_file}")
+
+    return results
+
+
 def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
                 work_dir='./outputs', verbose=False, reuse=False):
     """
@@ -453,8 +675,8 @@ def main():
         # Build dataset
         dataset = build_dataset(dataset_name)
 
-        # Run k-fold inference
-        kfold_results = infer_kfold(
+        # Run k-fold inference (with batch optimization if available)
+        kfold_results = infer_kfold_batch(
             model=model,
             dataset=dataset,
             k=args.k,
@@ -463,7 +685,8 @@ def main():
             seed_base=args.seed_base,
             work_dir=work_dir,
             verbose=args.verbose,
-            reuse=args.reuse
+            reuse=args.reuse,
+            batch_size=args.batch_size
         )
 
         # Convert to DataFrame
