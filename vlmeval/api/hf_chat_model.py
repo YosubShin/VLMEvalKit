@@ -76,6 +76,11 @@ class HFChatModel:
                 self.logger.critical('Please install fastchat first to use vicuna. ')
                 raise err
 
+        # Filter out VLMEvalKit-specific kwargs that shouldn't be passed to HF generate
+        self.vlmeval_kwargs = ['verbose', 'retry', 'wait', 'fail_msg', 'nproc']
+        for k in self.vlmeval_kwargs:
+            kwargs.pop(k, None)
+
         self.explicit_device = kwargs.pop('device', None)
         num_gpu = 1  # Default to 1 GPU
         if self.explicit_device is None:
@@ -150,7 +155,17 @@ class HFChatModel:
             self.logger.info(f'Following args will be used for generation (If not set specifically), {k}: {v}. ')
         self.kwargs = kwargs
 
+    def _filter_kwargs(self, kwargs):
+        """Filter out kwargs that are not valid for HuggingFace generate method."""
+        # List of VLMEvalKit-specific kwargs to filter out
+        invalid_keys = ['dataset', 'verbose', 'retry', 'wait', 'fail_msg', 'nproc']
+        filtered = {k: v for k, v in kwargs.items() if k not in invalid_keys}
+        return filtered
+
     def generate_str(self, input, **kwargs):
+        # Filter out invalid kwargs
+        kwargs = self._filter_kwargs(kwargs)
+
         if 'baichuan' in self.model_path.lower():
             messages = []
             messages.append({'role': 'user', 'content': input})
@@ -223,6 +238,9 @@ class HFChatModel:
         return tot + self.answer_buffer < self.context_length
 
     def generate_list(self, full_inputs, offset=0, **kwargs):
+        # Filter out invalid kwargs
+        kwargs = self._filter_kwargs(kwargs)
+
         assert isinstance(full_inputs, list)
         inputs = full_inputs[offset:]
         if not self.length_ok(inputs):
