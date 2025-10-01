@@ -13,7 +13,6 @@ Usage:
 import os
 import sys
 import torch
-import argparse
 import warnings
 import pandas as pd
 from tqdm import tqdm
@@ -23,10 +22,6 @@ from uuid import uuid4
 # VLMEvalKit imports
 from vlmeval import *
 from vlmeval.dataset import build_dataset
-from vlmeval.tools import LOAD_DATASET, abbr2full, logger
-from vlmeval.utils import TSVDataset, track_progress_rich, dataset_URLs
-from vlmeval.utils.result_transfer import MMMU_result_transfer, MMTBench_result_transfer
-from vlmeval.tools import DATASET_TYPE, abbr2full, LOAD_DATASET
 from vlmeval.config import supported_VLM
 from vlmeval.utils.arguments import build_parser
 from vlmeval.smp import *
@@ -317,13 +312,14 @@ def main():
     os.makedirs(work_dir, exist_ok=True)
 
     # Get full model and dataset names
-    model_name = abbr2full(args.model)
+    model_name = args.model
     dataset_names = args.data
 
     # Convert single dataset to list
     if isinstance(dataset_names, str):
         dataset_names = [dataset_names]
 
+    logger = get_logger('RUN_KFold')
     logger.info(f"Starting k-fold inference with k={args.k}")
     logger.info(f"Model: {model_name}")
     logger.info(f"Datasets: {dataset_names}")
