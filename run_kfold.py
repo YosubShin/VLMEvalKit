@@ -172,8 +172,10 @@ def infer_kfold_batch(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base
 def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
                         temperature, top_p, seed_base, work_dir, verbose, reuse):
     """
-    Internal function for batched k-fold inference.
+    Internal function for batched k-fold inference using existing batch processing infrastructure.
     """
+    from vlmeval.utils.batch_processing import BatchCollector, BatchProcessor
+
     logger = get_logger('RUN_KFold')
     dataset_name = dataset.dataset_name
     model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
@@ -181,7 +183,7 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
     logger.info(f"Starting batched k-fold inference with k={k}, batch_size={batch_size}")
     logger.info(f"Model: {model_name}, Dataset: {dataset_name}")
     logger.info(f"Temperature: {temperature}, Top-p: {top_p}")
-    logger.info(f"Processing {prompts_per_batch} prompts per batch")
+    logger.info(f"Processing up to {prompts_per_batch} prompts per batch")
 
     # Prepare output file
     os.makedirs(work_dir, exist_ok=True)
@@ -213,127 +215,145 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
     data = dataset.data
     total_items = len(data)
 
-    # Collect items that need processing
-    items_to_process = []
+    # Initialize batch collector and processor (like in infer_data_batch)
+    collector = BatchCollector(
+        max_batch_size=batch_size,
+        batch_timeout=5.0,
+        enable_smart_batching=True,
+        verbose=verbose
+    )
+
+    processor = BatchProcessor(model, verbose=verbose)
+
+    # Count items that need processing
+    items_to_process = 0
+    k_iterations_needed = 0
     for _, row in data.iterrows():
         index = row['index']
-        if index not in results or len(results.get(index, {}).get('predictions', [])) < k:
-            items_to_process.append(row)
+        existing_preds = len(results.get(index, {}).get('predictions', [])) if index in results else 0
+        if existing_preds < k:
+            items_to_process += 1
+            k_iterations_needed += (k - existing_preds)
 
-    logger.info(f"Items to process: {len(items_to_process)}/{total_items}")
+    logger.info(f"Items to process: {items_to_process}/{total_items}")
+    logger.info(f"Total k-iterations needed: {k_iterations_needed}")
 
-    # Process in batches
-    from tqdm import tqdm
-    pbar = tqdm(total=len(items_to_process), desc=f'Batched K-fold (k={k}, batch={batch_size})')
+    # Progress bar tracks individual items (prompts)
+    model_desc = f"{model_name} K-fold"
+    progress_bar = tqdm(total=total_items, desc=f'Batch K-fold {model_desc}/{dataset_name}')
 
-    for batch_start in range(0, len(items_to_process), prompts_per_batch):
-        batch_end = min(batch_start + prompts_per_batch, len(items_to_process))
-        batch_items = items_to_process[batch_start:batch_end]
+    # Update progress for already complete items
+    already_complete = total_items - items_to_process
+    if already_complete > 0:
+        progress_bar.update(already_complete)
+        if verbose:
+            logger.info(f"Reusing {already_complete} complete results from previous run")
 
-        # Prepare batch messages - each prompt repeated k times
-        batch_messages = []
-        batch_metadata = []  # Track which prompt and k-iteration each message corresponds to
+    # Process all items
+    processed_count = 0
+    save_counter = 0
 
-        for item in batch_items:
-            index = item['index']
+    for _, row in data.iterrows():
+        index = row['index']
 
-            # Initialize result if needed
-            if index not in results:
-                results[index] = {
-                    'index': index,
-                    'question': item.get('question', ''),
-                    'answer': item.get('answer', ''),
-                    'predictions': [],
-                    'metadata': {
-                        'temperatures': [],
-                        'seeds': [],
-                        'top_p_values': []
-                    }
+        # Skip if already complete for this prompt
+        if index in results and len(results[index].get('predictions', [])) >= k:
+            continue
+
+        # Initialize result structure if needed
+        if index not in results:
+            results[index] = {
+                'index': index,
+                'question': row.get('question', ''),
+                'answer': row.get('answer', ''),
+                'predictions': [],
+                'metadata': {
+                    'temperatures': [],
+                    'seeds': [],
+                    'top_p_values': []
                 }
+            }
 
-            # Build prompt
-            if hasattr(model, 'use_custom_prompt') and model.use_custom_prompt(dataset_name):
-                prompt_struct = model.build_prompt(item, dataset=dataset_name)
-            else:
-                prompt_struct = dataset.build_prompt(item)
+        # Build prompt once for this item
+        if hasattr(model, 'use_custom_prompt') and model.use_custom_prompt(dataset_name):
+            prompt_struct = model.build_prompt(row, dataset=dataset_name)
+        else:
+            prompt_struct = dataset.build_prompt(row)
 
-            # Add k copies of this prompt to the batch
-            existing_preds = len(results[index]['predictions'])
-            for k_iter in range(existing_preds, k):
-                batch_messages.append(prompt_struct)
-                batch_metadata.append({
-                    'index': index,
-                    'k_iter': k_iter,
-                    'seed': seed_base + k_iter
-                })
+        # Add k iterations of this prompt to the batch collector
+        existing_preds = len(results[index]['predictions'])
+        for k_iter in range(existing_preds, k):
+            # Add to batch collector (it will return a ready batch when full)
+            ready_batch = collector.add_item(
+                f"{index}_k{k_iter}",  # Unique ID for this k-iteration
+                prompt_struct,
+                dataset_name
+            )
 
-        # If batch is not full, we still process what we have
-        if len(batch_messages) > 0:
-            try:
-                # Set seeds for the batch
-                seeds = [meta['seed'] for meta in batch_metadata]
-                if torch.cuda.is_available():
-                    # Set different seeds for different samples
-                    torch.cuda.manual_seed(seeds[0] if seeds else seed_base)
-                torch.manual_seed(seeds[0] if seeds else seed_base)
+            if ready_batch:
+                # Process the ready batch
+                if verbose:
+                    logger.info(f"Processing batch of {len(ready_batch['indices'])} k-iterations")
 
-                # Generate batch predictions
-                if hasattr(model, 'generate_batch_vllm'):
-                    # Use VLLM batch generation
-                    batch_responses = model.generate_batch_vllm(
-                        batch_messages,
-                        dataset=dataset_name,
-                        temperature=temperature,
-                        top_p=top_p,
-                        batch_size=len(batch_messages)
-                    )
-                else:
-                    # Use regular batch generation if available
-                    batch_responses = model.generate_batch(
-                        batch_messages,
-                        dataset=dataset_name,
-                        temperature=temperature,
-                        top_p=top_p
-                    )
+                batch_results = processor.process_batch(ready_batch)
 
-                # Process responses and store in results
-                for response, meta in zip(batch_responses, batch_metadata):
-                    index = meta['index']
-                    results[index]['predictions'].append(response)
-                    results[index]['metadata']['temperatures'].append(temperature)
-                    results[index]['metadata']['seeds'].append(meta['seed'])
-                    results[index]['metadata']['top_p_values'].append(top_p)
+                # Store results
+                for batch_idx, response in batch_results.items():
+                    # Parse the batch_idx to get original index and k_iter
+                    parts = batch_idx.split('_k')
+                    if len(parts) == 2:
+                        orig_index = parts[0]
+                        iter_num = int(parts[1])
 
-                    if verbose and meta['k_iter'] == 0:
-                        logger.info(f"Index {index} - First response: {response[:100]}...")
+                        # Store the result
+                        if orig_index in results:
+                            results[orig_index]['predictions'].append(response)
+                            results[orig_index]['metadata']['temperatures'].append(temperature)
+                            results[orig_index]['metadata']['seeds'].append(seed_base + iter_num)
+                            results[orig_index]['metadata']['top_p_values'].append(top_p)
 
-            except Exception as e:
-                logger.error(f"Error in batch inference: {e}")
-                # Fall back to sequential processing for this batch
-                for msg, meta in zip(batch_messages, batch_metadata):
-                    try:
-                        response = model.generate(msg, dataset=dataset_name)
-                        index = meta['index']
-                        results[index]['predictions'].append(response)
-                        results[index]['metadata']['temperatures'].append(temperature)
-                        results[index]['metadata']['seeds'].append(meta['seed'])
-                        results[index]['metadata']['top_p_values'].append(top_p)
-                    except Exception as e2:
-                        logger.error(f"Error processing index {meta['index']}: {e2}")
+                            if verbose and iter_num == 0:
+                                logger.info(f"Index {orig_index} - First response: {response[:100]}...")
 
-            # Clear GPU cache
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                save_counter += 1
+                # Save periodically
+                if save_counter % 5 == 0:
+                    dump(results, output_file)
+                    if verbose:
+                        logger.info(f"Saved checkpoint after {save_counter} batches")
 
-        pbar.update(len(batch_items))
+        # Update progress after completing all k iterations for this item
+        progress_bar.update(1)
+        processed_count += 1
 
-        # Save progress periodically
-        if (batch_end % (prompts_per_batch * 5)) == 0 or batch_end == len(items_to_process):
-            dump(results, output_file)
-            if verbose:
-                logger.info(f"Saved checkpoint at {batch_end}/{len(items_to_process)} items")
+        # Clear GPU cache periodically
+        if processed_count % 10 == 0 and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-    pbar.close()
+    # Process any remaining items in the collector
+    final_batch = collector.force_batch()
+    if final_batch:
+        if verbose:
+            logger.info(f"Processing final batch of {len(final_batch['indices'])} k-iterations")
+
+        batch_results = processor.process_batch(final_batch)
+
+        # Store results
+        for batch_idx, response in batch_results.items():
+            # Parse the batch_idx to get original index and k_iter
+            parts = batch_idx.split('_k')
+            if len(parts) == 2:
+                orig_index = parts[0]
+                iter_num = int(parts[1])
+
+                # Store the result
+                if orig_index in results:
+                    results[orig_index]['predictions'].append(response)
+                    results[orig_index]['metadata']['temperatures'].append(temperature)
+                    results[orig_index]['metadata']['seeds'].append(seed_base + iter_num)
+                    results[orig_index]['metadata']['top_p_values'].append(top_p)
+
+    progress_bar.close()
 
     # Final save
     dump(results, output_file)
