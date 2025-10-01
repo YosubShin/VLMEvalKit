@@ -22,7 +22,7 @@ def get_gpu_num(model_name):
 
 validated_llms = [
     'internlm/internlm-chat-7b', 'internlm/internlm-chat-7b-8k', 'internlm/internlm-chat-20b',
-    'Qwen/Qwen-7B-Chat', 'Qwen/Qwen-14B-Chat',
+    'Qwen/Qwen-7B-Chat', 'Qwen/Qwen-14B-Chat', 'Qwen/Qwen3-4B-Instruct-2507',
     'THUDM/chatglm2-6b', 'THUDM/chatglm2-6b-32k', 'THUDM/chatglm3-6b', 'THUDM/chatglm3-6b-32k',
     'baichuan-inc/Baichuan2-7B-Chat', 'baichuan-inc/Baichuan2-13B-Chat',
     'lmsys/vicuna-7b-v1.5', 'lmsys/vicuna-13b-v1.5',
@@ -43,8 +43,11 @@ class HFChatModel:
             context_window = model.config.max_position_embeddings
         elif 'vicuna' in model_path:
             context_window = model.generation_config.max_length
+        elif 'qwen3' in model_path:
+            # Qwen3 uses max_position_embeddings
+            context_window = model.config.max_position_embeddings
         else:
-            # chatglm & qwen
+            # chatglm & qwen (older versions)
             context_window = model.config.seq_length
         return context_window
 
@@ -174,6 +177,38 @@ class HFChatModel:
         elif 'llama' in self.model_path.lower():
             prompt = [{'role': 'system', 'content': self.system_prompt}, {'role': 'user', 'content': input}]
             resp = self.model(prompt, gen_config=self.gen_config).text
+        elif 'qwen3' in self.model_path.lower():
+            # Qwen3 specific generation using chat template
+            messages = []
+            if self.system_prompt:
+                messages.append({'role': 'system', 'content': self.system_prompt})
+            messages.append({'role': 'user', 'content': input})
+
+            text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+            model_inputs = self.tokenizer([text], return_tensors="pt")
+
+            if torch.cuda.is_available():
+                model_inputs = model_inputs.to(self.model.device)
+
+            # Qwen3 recommended parameters
+            params = dict(
+                max_new_tokens=16384,
+                temperature=0.7,
+                top_p=0.8,
+                top_k=20,
+                min_p=0.0,
+                do_sample=True
+            )
+            params.update(self.kwargs)
+            params.update(kwargs)
+
+            generated_ids = self.model.generate(**model_inputs, **params)
+            output_ids = generated_ids[0][len(model_inputs.input_ids[0]):].tolist()
+            resp = self.tokenizer.decode(output_ids, skip_special_tokens=True)
         else:
             params = self.kwargs
             params.update(kwargs)
@@ -241,6 +276,55 @@ class HFChatModel:
                 skip_special_tokens=True,
                 spaces_between_special_tokens=False)
             response = response.lstrip('\n')
+        elif 'qwen3' in model_path:
+            # Qwen3 specific generation using chat template
+            messages = []
+            if self.system_prompt:
+                messages.append({'role': 'system', 'content': self.system_prompt})
+
+            # Build message history from input list
+            assert isinstance(inputs, list) and isinstance(inputs[0], str)
+            if len(inputs) % 2 == 1:
+                # Odd number of inputs: user, assistant, user, assistant, ..., user
+                for i in range(len(inputs) // 2):
+                    messages.append({'role': 'user', 'content': inputs[2 * i]})
+                    messages.append({'role': 'assistant', 'content': inputs[2 * i + 1]})
+                messages.append({'role': 'user', 'content': inputs[-1]})
+            else:
+                # Even number of inputs: assistant, user, assistant, user, ...
+                if len(inputs) > 0:
+                    messages.append({'role': 'assistant', 'content': inputs[0]})
+                    for i in range(len(inputs) // 2 - 1):
+                        messages.append({'role': 'user', 'content': inputs[2 * i + 1]})
+                        messages.append({'role': 'assistant', 'content': inputs[2 * i + 2]})
+                    if len(inputs) > 1:
+                        messages.append({'role': 'user', 'content': inputs[-1]})
+
+            text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+            model_inputs = self.tokenizer([text], return_tensors="pt")
+
+            if torch.cuda.is_available():
+                model_inputs = model_inputs.to(self.model.device)
+
+            # Qwen3 recommended parameters
+            params = dict(
+                max_new_tokens=16384,
+                temperature=0.7,
+                top_p=0.8,
+                top_k=20,
+                min_p=0.0,
+                do_sample=True
+            )
+            params.update(self.kwargs)
+            params.update(kwargs)
+
+            generated_ids = self.model.generate(**model_inputs, **params)
+            output_ids = generated_ids[0][len(model_inputs.input_ids[0]):].tolist()
+            response = self.tokenizer.decode(output_ids, skip_special_tokens=True)
         else:
             # The default option, support internlm, chatglm, qwen
             history, msg = [], None
