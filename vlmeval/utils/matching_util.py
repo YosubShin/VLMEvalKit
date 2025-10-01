@@ -44,7 +44,9 @@ def can_infer_option(answer, choices):
         r'(?:✅\s*)?Final\s+output\s*:\s*\**([A-Z])\**(?:\s|$|\.|\,)',
         # "### Final Output: Z"
         r'#{1,3}\s*Final\s+Output\s*:\s*\**([A-Z])\**(?:\s|$|\.|\,)',
-        # "Output: A"
+        # "**Output: Z**"
+        r'\*\*Output\s*:\s*([A-Z])\*\*',
+        # "Output: A" with optional bold
         r'(?:^|\s)Output\s*:\s*\**([A-Z])\**(?:\s|$|\.|\,)',
         # Standalone bold answer at end: "**Z**"
         r'\*\*([A-Z])\*\*\s*$',
