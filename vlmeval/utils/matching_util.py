@@ -32,15 +32,30 @@ def can_infer_option(answer, choices):
     if latex_match and latex_match.group(1).upper() in choices:
         return latex_match.group(1).upper()
 
-    # Check for explicit answer patterns
-    # Matches: "Answer: D", "The answer is D", "The correct answer is D", etc.
-    answer_pattern = re.search(
+    # Check for various answer patterns
+    patterns = [
+        # Original pattern: "Answer: D", "The answer is D", "The correct answer is D"
         r'(?:(?:The|the)?\s*(?:correct|best|final)?\s*answer\s*(?:is|:)\s*)([A-Z])(?:\s|$|\.|\,)',
-        answer,
-        re.IGNORECASE
-    )
-    if answer_pattern and answer_pattern.group(1).upper() in choices:
-        return answer_pattern.group(1).upper()
+        # "Final Answer: Z" with optional asterisks
+        r'(?:Final\s+Answer\s*:\s*\**)([A-Z])(?:\**)(?:\s|$|\.|\,)',
+        # "**Final Answer: Z**"
+        r'\*\*Final\s+Answer\s*:\s*([A-Z])\*\*',
+        # "Final output: B" or "✅ Final output: **A**"
+        r'(?:✅\s*)?Final\s+output\s*:\s*\**([A-Z])\**(?:\s|$|\.|\,)',
+        # "### Final Output: Z"
+        r'#{1,3}\s*Final\s+Output\s*:\s*\**([A-Z])\**(?:\s|$|\.|\,)',
+        # "Output: A"
+        r'(?:^|\s)Output\s*:\s*\**([A-Z])\**(?:\s|$|\.|\,)',
+        # Standalone bold answer at end: "**Z**"
+        r'\*\*([A-Z])\*\*\s*$',
+        # Bold answer anywhere: "**A**" (less strict)
+        r'\*\*([A-Z])\*\*'
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, answer, re.IGNORECASE | re.MULTILINE)
+        if match and match.group(1).upper() in choices:
+            return match.group(1).upper()
 
     def count_choice(splits, choices, prefix='', suffix=''):
         cnt = 0
