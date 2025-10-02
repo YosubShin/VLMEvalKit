@@ -621,7 +621,7 @@ def convert_to_dataframe(kfold_results, k):
     return df
 
 
-def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', **judge_kwargs):
+def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', judge_model=None, **judge_kwargs):
     """
     Evaluate k-fold predictions using the dataset's judge.
 
@@ -641,43 +641,68 @@ def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', **judge_kwa
 
     results = df_predictions.copy()
 
-    # Evaluate each prediction column separately
-    for i in range(k):
-        pred_col = f'prediction_{i+1}'
-        verdict_col = f'verdict_{i+1}'
+    # Build judge model once if not provided
+    if judge_model is None:
+        use_vllm_judge = judge_kwargs.get('use_vllm_judge', False)
+        model_name = judge_kwargs.get('model', 'gpt-4o-mini')
 
-        logger.info(f"Evaluating prediction {i+1}/{k}")
+        if use_vllm_judge and not model_name.startswith('gpt'):
+            logger.info(f"Building VLLM judge model: {model_name}")
+            judge_model = dataset._build_vllm_judge(
+                model_name,
+                batch_size=judge_kwargs.get('batch_size', 32),
+                **judge_kwargs
+            )
+        else:
+            from vlmeval.dataset.utils.judge_util import build_judge
+            judge_model = build_judge(**judge_kwargs)
 
-        # Create temporary dataframe for evaluation
-        temp_df = df_predictions[['index', 'question', 'answer']].copy()
-        temp_df['prediction'] = df_predictions[pred_col]
+    try:
+        # Evaluate each prediction column using the same judge model
+        for i in range(k):
+            pred_col = f'prediction_{i+1}'
+            verdict_col = f'verdict_{i+1}'
 
-        # Save to temporary file
-        temp_file = osp.join(work_dir, f'temp_eval_{uuid4()}.xlsx')
-        temp_df.to_excel(temp_file, index=False)
+            logger.info(f"Evaluating prediction {i+1}/{k}")
 
-        try:
-            # Use dataset's evaluate method
-            eval_result = dataset.evaluate(temp_file, **judge_kwargs)
+            # Create temporary dataframe for evaluation
+            temp_df = df_predictions[['index', 'question', 'answer']].copy()
+            temp_df['prediction'] = df_predictions[pred_col]
 
-            # Extract verdicts
-            if isinstance(eval_result, pd.DataFrame):
-                # Merge verdict into results
-                if 'verdict' in eval_result.columns:
-                    results[verdict_col] = eval_result['verdict'].values
+            # Save to temporary file
+            temp_file = osp.join(work_dir, f'temp_eval_{uuid4()}.xlsx')
+            temp_df.to_excel(temp_file, index=False)
+
+            try:
+                # Pass the pre-built judge model to avoid re-instantiation
+                eval_result = dataset.evaluate(temp_file, judge_model=judge_model, **judge_kwargs)
+
+                # Extract verdicts
+                if isinstance(eval_result, pd.DataFrame):
+                    # Merge verdict into results
+                    if 'verdict' in eval_result.columns:
+                        results[verdict_col] = eval_result['verdict'].values
+                    else:
+                        if judge_kwargs.get('verbose', False):
+                            logger.warning(f"No verdict column found for prediction {i+1}")
+                        results[verdict_col] = 0
                 else:
                     if judge_kwargs.get('verbose', False):
-                        logger.warning(f"No verdict column found for prediction {i+1}")
+                        logger.warning(f"Unexpected evaluation result format for prediction {i+1}")
                     results[verdict_col] = 0
-            else:
-                if judge_kwargs.get('verbose', False):
-                    logger.warning(f"Unexpected evaluation result format for prediction {i+1}")
-                results[verdict_col] = 0
 
-        finally:
-            # Clean up temp file
-            if osp.exists(temp_file):
-                os.remove(temp_file)
+            finally:
+                # Clean up temp file
+                if osp.exists(temp_file):
+                    os.remove(temp_file)
+
+    finally:
+        # Clean up judge model if we created it (and it's VLLM)
+        if judge_model is not None and hasattr(judge_model, 'llm'):
+            logger.info("Cleaning up VLLM judge model")
+            del judge_model
+            torch.cuda.empty_cache()
+            gc.collect()
 
     # Calculate verdict_sum (total correct out of k)
     verdict_columns = [f'verdict_{i+1}' for i in range(k)]
@@ -867,11 +892,13 @@ def main():
 
         # Evaluate if judge is available
         if hasattr(dataset, 'evaluate') and RANK == 0:
-            # Handle nproc/api-nproc
-            eval_nproc = args.api_nproc if args.api_nproc else args.nproc
+            # Determine if we should use VLLM for judge
+            use_vllm_judge = args.judge and not args.judge.startswith('gpt')
+
             judge_kwargs = {
                 'model': args.judge if args.judge else 'gpt-4o-mini',
-                'nproc': eval_nproc,
+                'batch_size': args.batch_size if args.batch_size else 32,
+                'use_vllm_judge': use_vllm_judge,
                 'verbose': args.verbose
             }
 

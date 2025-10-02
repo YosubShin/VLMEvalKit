@@ -12,6 +12,61 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
     DATASET_URL = {'WaltonMultimodalColdStart': ''}
     DATASET_MD5 = {}
 
+    def _build_vllm_judge(self, model_name, batch_size=32, **kwargs):
+        """Build a VLLM-based judge model for efficient batch evaluation."""
+        try:
+            from vllm import LLM, SamplingParams
+            import torch
+
+            # Map model names to actual paths
+            model_path = model_name
+            if model_name == 'qwen3-4b':
+                model_path = "Qwen/Qwen3-4B-Instruct-2507"
+
+            # Initialize VLLM with appropriate settings
+            gpu_count = torch.cuda.device_count()
+            tp_size = min(gpu_count, 4)  # Use at most 4 GPUs for judge model
+
+            llm = LLM(
+                model=model_path,
+                max_num_seqs=batch_size,
+                tensor_parallel_size=tp_size,
+                gpu_memory_utilization=0.9,  # Make sure to unload main model before evaluation
+                max_model_len=8192,  # Judge prompts are short
+            )
+
+            # Wrap in a simple interface
+            class VLLMJudge:
+                def __init__(self, llm_instance):
+                    self.llm = llm_instance
+                    self.sampling_params = SamplingParams(
+                        temperature=0.1,
+                        max_tokens=256,
+                        stop=["```", "\n\n"]
+                    )
+
+                def generate(self, prompts):
+                    """Generate responses for batch of prompts."""
+                    if isinstance(prompts, str):
+                        prompts = [prompts]
+
+                    outputs = self.llm.generate(prompts, self.sampling_params)
+                    responses = [output.outputs[0].text for output in outputs]
+
+                    return responses if len(responses) > 1 else responses[0]
+
+                def __del__(self):
+                    """Clean up VLLM resources."""
+                    if hasattr(self, 'llm'):
+                        del self.llm
+                        torch.cuda.empty_cache()
+
+            return VLLMJudge(llm)
+
+        except ImportError:
+            # Fallback to regular judge if VLLM not available
+            return build_judge(**kwargs)
+
     def __init__(self, dataset='WaltonMultimodalReasoning', **kwargs):
         super().__init__(dataset, **kwargs)
         self.dataset_name = dataset
@@ -95,20 +150,32 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
 
         return msgs
 
-    def evaluate(self, eval_file, **judge_kwargs):
+    def evaluate(self, eval_file, judge_model=None, **judge_kwargs):
         # Use GPT-4o-mini as judge for evaluation
         model = judge_kwargs.get('model', 'gpt-4o-mini')
         suffix = eval_file.split('.')[-1]
         result_path = eval_file.replace(f'.{suffix}', f'_{model}_judge.xlsx')
         score_path = eval_file.replace(f'.{suffix}', f'_{model}_score.csv')
-        nproc = judge_kwargs.pop('nproc', 4)
+        batch_size = judge_kwargs.pop('batch_size', 32)  # Use proper batch_size parameter
 
         if not osp.exists(result_path):
             data = load(eval_file)
 
-            # Build judge model
-            judge_kwargs['model'] = model
-            judge_model = build_judge(**judge_kwargs)
+            # Use provided judge model or build a new one
+            if judge_model is None:
+                # Check if we should use VLLM for judge (for local models like qwen3-4b)
+                use_vllm_judge = judge_kwargs.get('use_vllm_judge', False)
+
+                # Build judge model
+                judge_kwargs['model'] = model
+                if use_vllm_judge and not model.startswith('gpt'):
+                    # Use VLLM for local judge models
+                    judge_model = self._build_vllm_judge(model, batch_size=batch_size, **judge_kwargs)
+                else:
+                    judge_model = build_judge(**judge_kwargs)
+            else:
+                # Using pre-built judge model
+                use_vllm_judge = hasattr(judge_model, 'llm')  # Check if it's a VLLM model
 
             # Check if judge is working (only for API models)
             if hasattr(judge_model, 'working'):
@@ -123,17 +190,16 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
                     return matches[-1].strip()
                 return text.strip()
 
-            def judge_one(model, line):
-                """Judge a single prediction against ground truth"""
-                prediction = extract_answer(str(line.get('prediction', '')))
-                ground_truth = extract_answer(str(line.get('answer', '')))
+            def create_judge_prompt(prediction, ground_truth):
+                """Create a judge prompt for a single prediction"""
+                pred_answer = extract_answer(str(prediction))
+                gt_answer = extract_answer(str(ground_truth))
 
-                # Build judge prompt
-                judge_prompt = f"""You are evaluating a model's answer against the ground truth for a reasoning problem.
+                return f"""You are evaluating a model's answer against the ground truth for a reasoning problem.
 
-Model's Answer: {prediction}
+Model's Answer: {pred_answer}
 
-Ground Truth: {ground_truth}
+Ground Truth: {gt_answer}
 
 Please evaluate whether the model's answer is correct compared to the ground truth. Consider:
 1. Mathematical equivalence (e.g., 58% and 58 are the same)
@@ -145,9 +211,8 @@ Respond with a JSON containing:
 {{"verdict": 0}} if the answer is incorrect
 """
 
-                response = judge_model.generate(judge_prompt)
-
-                # Parse response
+            def parse_judge_response(response):
+                """Parse the judge's response to extract verdict"""
                 try:
                     import json
                     if isinstance(response, str):
@@ -157,16 +222,50 @@ Respond with a JSON containing:
                         result = json.loads(response)
                         return result.get('verdict', 0)
                 except:
-                    # Fallback to simple string comparison if JSON parsing fails
-                    return 1 if prediction.lower() == ground_truth.lower() else 0
+                    # Fallback to 0 if parsing fails
+                    return 0
 
-            # Judge all predictions
-            verdict_list = track_progress_rich(
-                lambda line: judge_one(judge_model, line),
-                [data.iloc[i] for i in range(len(data))],
-                nproc=nproc,
-                chunksize=nproc,
-            )
+            # Process in batches
+            verdict_list = []
+            total_items = len(data)
+
+            from tqdm import tqdm
+            with tqdm(total=total_items, desc="Evaluating with judge model") as pbar:
+                for i in range(0, total_items, batch_size):
+                    # Get batch of data
+                    batch_end = min(i + batch_size, total_items)
+                    batch_data = data.iloc[i:batch_end]
+
+                    # Create batch of prompts
+                    batch_prompts = [
+                        create_judge_prompt(row['prediction'], row['answer'])
+                        for _, row in batch_data.iterrows()
+                    ]
+
+                    # Generate responses for the batch
+                    if use_vllm_judge:
+                        # VLLM supports true batch processing
+                        batch_responses = judge_model.generate(batch_prompts)
+                        if not isinstance(batch_responses, list):
+                            batch_responses = [batch_responses]
+                    else:
+                        # For HFChatModel or API models, use sequential generation
+                        try:
+                            if len(batch_prompts) == 1:
+                                batch_responses = [judge_model.generate(batch_prompts[0])]
+                            else:
+                                # Try batch, but likely will be sequential
+                                batch_responses = [judge_model.generate(prompt) for prompt in batch_prompts]
+                        except Exception as e:
+                            print(f"Error in batch generation: {e}")
+                            batch_responses = [""] * len(batch_prompts)
+
+                    # Parse responses
+                    batch_verdicts = [parse_judge_response(resp) for resp in batch_responses]
+                    verdict_list.extend(batch_verdicts)
+
+                    # Update progress
+                    pbar.update(batch_end - i)
 
             data['verdict'] = verdict_list
             dump(data, result_path)
