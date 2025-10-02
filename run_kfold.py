@@ -20,6 +20,7 @@ from tqdm import tqdm
 import os.path as osp
 from uuid import uuid4
 import subprocess
+import gc
 
 # Setup multi-GPU environment (similar to run.py)
 def get_gpu_list():
@@ -853,8 +854,19 @@ def main():
             df_predictions.to_excel(pred_file, index=False)
             logger.info(f"Predictions saved to {pred_file}")
 
+        # Free GPU memory from inference model before evaluation
+        if args.use_vllm and hasattr(model, 'llm'):
+            logger.info("Freeing VLLM GPU memory before evaluation...")
+            del model.llm
+            del model
+            torch.cuda.empty_cache()
+            import gc
+            gc.collect()
+            torch.cuda.synchronize()
+            logger.info("GPU memory freed")
+
         # Evaluate if judge is available
-        if hasattr(dataset, 'evaluate'):
+        if hasattr(dataset, 'evaluate') and RANK == 0:
             # Handle nproc/api-nproc
             eval_nproc = args.api_nproc if args.api_nproc else args.nproc
             judge_kwargs = {
