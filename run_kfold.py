@@ -19,6 +19,42 @@ import pandas as pd
 from tqdm import tqdm
 import os.path as osp
 from uuid import uuid4
+import subprocess
+
+# Setup multi-GPU environment (similar to run.py)
+def get_gpu_list():
+    CUDA_VISIBLE_DEVICES = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+    if CUDA_VISIBLE_DEVICES != '':
+        gpu_list = [int(x) for x in CUDA_VISIBLE_DEVICES.split(',')]
+        return gpu_list
+    try:
+        ps = subprocess.Popen(('nvidia-smi', '--list-gpus'), stdout=subprocess.PIPE)
+        output = subprocess.check_output(('wc', '-l'), stdin=ps.stdout)
+        return list(range(int(output)))
+    except:
+        # no nvidia-smi, maybe a mac/ROCm?
+        return []
+
+# Setup distributed environment variables
+RANK = int(os.environ.get('RANK', 0))
+WORLD_SIZE = int(os.environ.get('WORLD_SIZE', 1))
+LOCAL_WORLD_SIZE = int(os.environ.get("LOCAL_WORLD_SIZE", 1))
+LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
+
+GPU_LIST = get_gpu_list()
+if LOCAL_WORLD_SIZE > 1 and len(GPU_LIST):
+    NGPU = len(GPU_LIST)
+    assert NGPU >= LOCAL_WORLD_SIZE, "The number of processes should be less than or equal to the number of GPUs"
+    GPU_PER_PROC = NGPU // LOCAL_WORLD_SIZE
+    DEVICE_START_IDX = GPU_PER_PROC * LOCAL_RANK
+    CUDA_VISIBLE_DEVICES = [str(i) for i in GPU_LIST[DEVICE_START_IDX: DEVICE_START_IDX + GPU_PER_PROC]]
+    CUDA_VISIBLE_DEVICES = ','.join(CUDA_VISIBLE_DEVICES)
+    # Set CUDA_VISIBLE_DEVICES
+    os.environ['CUDA_VISIBLE_DEVICES'] = CUDA_VISIBLE_DEVICES
+    print(
+        f'RANK: {RANK}, LOCAL_RANK: {LOCAL_RANK}, WORLD_SIZE: {WORLD_SIZE}, '
+        f'LOCAL_WORLD_SIZE: {LOCAL_WORLD_SIZE}, CUDA_VISIBLE_DEVICES: {CUDA_VISIBLE_DEVICES}'
+    )
 
 # VLMEvalKit imports
 from vlmeval import *
@@ -173,6 +209,7 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
                         temperature, top_p, seed_base, work_dir, verbose, reuse):
     """
     Internal function for batched k-fold inference using existing batch processing infrastructure.
+    Supports multi-GPU by splitting dataset across ranks.
     """
     from vlmeval.utils.batch_processing import BatchCollector, BatchProcessor
 
@@ -180,14 +217,22 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
     dataset_name = dataset.dataset_name
     model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
 
+    # Get rank and world size for distributed processing
+    rank, world_size = get_rank_and_world_size()
+
     logger.info(f"Starting batched k-fold inference with k={k}, batch_size={batch_size}")
     logger.info(f"Model: {model_name}, Dataset: {dataset_name}")
     logger.info(f"Temperature: {temperature}, Top-p: {top_p}")
     logger.info(f"Processing up to {prompts_per_batch} prompts per batch")
+    if world_size > 1:
+        logger.info(f"Distributed inference: Rank {rank}/{world_size}")
 
-    # Prepare output file
+    # Prepare output file (rank-specific for multi-GPU)
     os.makedirs(work_dir, exist_ok=True)
-    output_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}.pkl')
+    if world_size > 1:
+        output_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}_rank{rank}.pkl')
+    else:
+        output_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}.pkl')
 
     # Load existing results if reusing
     if osp.exists(output_file) and reuse:
@@ -211,9 +256,19 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
     else:
         results = {}
 
-    # Get dataset data
+    # Get dataset data and split by rank (similar to infer_data in inference.py)
     data = dataset.data
-    total_items = len(data)
+    total_items_global = len(data)
+
+    # Split data across ranks for distributed processing
+    if world_size > 1:
+        # Each rank processes different indices
+        sheet_indices = list(range(rank, len(data), world_size))
+        data = data.iloc[sheet_indices]
+        total_items = len(data)
+        logger.info(f"Rank {rank} processing {total_items}/{total_items_global} items (indices: {sheet_indices[:5]}...)")
+    else:
+        total_items = total_items_global
 
     # Initialize batch collector and processor (like in infer_data_batch)
     collector = BatchCollector(
@@ -331,8 +386,8 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
             torch.cuda.empty_cache()
 
     # Process any remaining items in the collector
-    final_batch = collector.force_batch()
-    if final_batch:
+    final_batches = collector.flush_all()
+    for final_batch in final_batches:
         if verbose:
             logger.info(f"Processing final batch of {len(final_batch)} k-iterations")
 
@@ -366,6 +421,7 @@ def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
                 work_dir='./outputs', verbose=False, reuse=False):
     """
     Run k-fold inference on a dataset.
+    Supports multi-GPU by splitting dataset across ranks.
 
     Args:
         model: The VLM model to use
@@ -385,13 +441,21 @@ def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
     dataset_name = dataset.dataset_name
     model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
 
+    # Get rank and world size for distributed processing
+    rank, world_size = get_rank_and_world_size()
+
     logger.info(f"Starting k-fold inference with k={k}")
     logger.info(f"Model: {model_name}, Dataset: {dataset_name}")
     logger.info(f"Temperature: {temperature}, Top-p: {top_p}")
+    if world_size > 1:
+        logger.info(f"Distributed inference: Rank {rank}/{world_size}")
 
-    # Prepare output file
+    # Prepare output file (rank-specific for multi-GPU)
     os.makedirs(work_dir, exist_ok=True)
-    output_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}.pkl')
+    if world_size > 1:
+        output_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}_rank{rank}.pkl')
+    else:
+        output_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}.pkl')
 
     # Load existing results if any (for resumption)
     if osp.exists(output_file) and reuse:
@@ -415,12 +479,22 @@ def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
     else:
         results = {}
 
-    # Get dataset data
+    # Get dataset data and split by rank (similar to infer_data in inference.py)
     data = dataset.data
-    total_items = len(data)
+    total_items_global = len(data)
+
+    # Split data across ranks for distributed processing
+    if world_size > 1:
+        # Each rank processes different indices
+        sheet_indices = list(range(rank, len(data), world_size))
+        data = data.iloc[sheet_indices]
+        total_items = len(data)
+        logger.info(f"Rank {rank} processing {total_items}/{total_items_global} items")
+    else:
+        total_items = total_items_global
 
     # Progress bar for overall completion
-    pbar = tqdm(total=total_items, desc=f'K-fold Inference (k={k})')
+    pbar = tqdm(total=total_items, desc=f'K-fold Inference (k={k}, Rank {rank}/{world_size})')
 
     for _, row in data.iterrows():
         index = row['index']
@@ -612,9 +686,45 @@ def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', **judge_kwa
     return results
 
 
+def merge_kfold_results(work_dir, model_name, dataset_name, k, world_size):
+    """Merge k-fold results from multiple ranks into a single file."""
+    logger = get_logger('RUN')
+
+    # Load results from all ranks
+    all_results = {}
+    for rank in range(world_size):
+        rank_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}_rank{rank}.pkl')
+        if osp.exists(rank_file):
+            rank_results = load(rank_file)
+            all_results.update(rank_results)
+            logger.info(f"Loaded {len(rank_results)} results from rank {rank}")
+
+    # Save merged results
+    merged_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}.pkl')
+    dump(all_results, merged_file)
+    logger.info(f"Merged {len(all_results)} total results to {merged_file}")
+
+    # Clean up rank-specific files
+    for rank in range(world_size):
+        rank_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{k}_rank{rank}.pkl')
+        if osp.exists(rank_file):
+            os.remove(rank_file)
+
+    return all_results
+
+
 def main():
     """Main function for k-fold inference."""
     args = parse_args()
+
+    # Initialize distributed if using multiple GPUs
+    if WORLD_SIZE > 1:
+        import torch.distributed as dist
+        from datetime import timedelta
+        dist.init_process_group(
+            backend='nccl',
+            timeout=timedelta(seconds=int(os.environ.get('DIST_TIMEOUT', 3600)))
+        )
 
     # Disable warnings if requested
     if args.no_warning:
@@ -709,8 +819,24 @@ def main():
             batch_size=args.batch_size
         )
 
-        # Convert to DataFrame
-        df_predictions = convert_to_dataframe(kfold_results, args.k)
+        # Synchronize all ranks before merging
+        if WORLD_SIZE > 1:
+            dist.barrier()
+
+        # Merge results from all ranks (only rank 0 does this)
+        if WORLD_SIZE > 1 and RANK == 0:
+            kfold_results = merge_kfold_results(work_dir, model_name, dataset_name, args.k, WORLD_SIZE)
+        elif WORLD_SIZE > 1:
+            # Other ranks wait for merge to complete
+            dist.barrier()
+            # Load merged results
+            merged_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{args.k}.pkl')
+            kfold_results = load(merged_file)
+
+        # Only rank 0 does evaluation and saving
+        if RANK == 0:
+            # Convert to DataFrame
+            df_predictions = convert_to_dataframe(kfold_results, args.k)
 
         # Save predictions
         pred_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{args.k}_predictions.xlsx')
