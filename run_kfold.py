@@ -744,8 +744,15 @@ def main():
 
     # Handle custom model or regular model
     if args.pass_custom_model:
-        model_name = args.pass_custom_model
-        use_custom_model = True
+        # Register custom model and get clean name (like run.py does)
+        try:
+            from vlmeval.utils.model_detection import register_custom_model
+            model_name = register_custom_model(args.pass_custom_model)
+            logger.info(f'Successfully registered custom model: {model_name} -> {args.pass_custom_model}')
+            use_custom_model = True
+        except Exception as e:
+            logger.error(f'Failed to register custom model {args.pass_custom_model}: {e}')
+            sys.exit(1)
     elif args.model:
         model_name = args.model
         use_custom_model = False
@@ -790,25 +797,18 @@ def main():
 
     # Build the model
     if use_custom_model:
-        # For custom models, use the model detection system
-        try:
-            from vlmeval.utils.model_detection import register_custom_model
-            custom_model_name = register_custom_model(model_name)
-            logger.info(f'Successfully registered custom model: {custom_model_name} -> {model_name}')
-            model = build_model(custom_model_name, **model_kwargs)
-        except Exception as e:
-            logger.error(f'Failed to register custom model {model_name}: {e}')
-            logger.error('Please check that the model path is valid and the model architecture is supported.')
-            logger.error('Supported architectures include: qwen2_vl, qwen_vl, llava, internvl, minicpm, phi, molmo, '
-                         'aria, pixtral, smolvlm, idefics, cogvlm, deepseek, llama-vision, gemma, vila, ovis, '
-                         'bunny, cambrian, mantis, moondream')
-            sys.exit(1)
+        # For custom models, model_name is already the registered clean name
+        model = build_model(model_name, **model_kwargs)
     else:
         model = build_model(model_name, **model_kwargs)
 
     # Process each dataset
     for dataset_name in dataset_names:
         logger.info(f"\nProcessing dataset: {dataset_name}")
+
+        # Create model-specific work directory (like run.py does)
+        model_work_dir = osp.join(work_dir, model_name)
+        os.makedirs(model_work_dir, exist_ok=True)
 
         # Build dataset
         dataset = build_dataset(dataset_name)
@@ -821,7 +821,7 @@ def main():
             temperature=args.temperature,
             top_p=args.top_p,
             seed_base=args.seed_base,
-            work_dir=work_dir,
+            work_dir=model_work_dir,  # Use model-specific directory
             verbose=args.verbose,
             reuse=args.reuse,
             batch_size=args.batch_size
@@ -833,12 +833,12 @@ def main():
 
         # Merge results from all ranks (only rank 0 does this)
         if WORLD_SIZE > 1 and RANK == 0:
-            kfold_results = merge_kfold_results(work_dir, model_name, dataset_name, args.k, WORLD_SIZE)
+            kfold_results = merge_kfold_results(model_work_dir, model_name, dataset_name, args.k, WORLD_SIZE)
         elif WORLD_SIZE > 1:
             # Other ranks wait for merge to complete
             dist.barrier()
             # Load merged results
-            merged_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{args.k}.pkl')
+            merged_file = osp.join(model_work_dir, f'{model_name}_{dataset_name}_k{args.k}.pkl')
             kfold_results = load(merged_file)
 
         # Only rank 0 does evaluation and saving
@@ -846,10 +846,10 @@ def main():
             # Convert to DataFrame
             df_predictions = convert_to_dataframe(kfold_results, args.k)
 
-        # Save predictions
-        pred_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{args.k}_predictions.xlsx')
-        df_predictions.to_excel(pred_file, index=False)
-        logger.info(f"Predictions saved to {pred_file}")
+            # Save predictions
+            pred_file = osp.join(model_work_dir, f'{model_name}_{dataset_name}_k{args.k}_predictions.xlsx')
+            df_predictions.to_excel(pred_file, index=False)
+            logger.info(f"Predictions saved to {pred_file}")
 
         # Evaluate if judge is available
         if hasattr(dataset, 'evaluate'):
@@ -865,12 +865,12 @@ def main():
                 dataset=dataset,
                 df_predictions=df_predictions,
                 k=args.k,
-                work_dir=work_dir,
+                work_dir=model_work_dir,  # Use model-specific directory
                 **judge_kwargs
             )
 
             # Save evaluated results
-            eval_file = osp.join(work_dir, f'{model_name}_{dataset_name}_k{args.k}_evaluated.xlsx')
+            eval_file = osp.join(model_work_dir, f'{model_name}_{dataset_name}_k{args.k}_evaluated.xlsx')
             df_evaluated.to_excel(eval_file, index=False)
             logger.info(f"Evaluated results saved to {eval_file}")
 
