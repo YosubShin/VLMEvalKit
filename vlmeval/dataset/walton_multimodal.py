@@ -72,30 +72,7 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
 
     def build_prompt(self, line):
         # Build the prompt with the reasoning trace structure
-        prompt = """When analyzing any query or task, please follow the structure below:
-1. Draft Response:
-Generate an initial response.
-2. Critical Comments:
-Analyze your draft response by considering:
-• Potential weaknesses or gaps
-• Logical flaws or inconsistencies
-• Missing perspectives or alternatives
-• Areas for improvement
-• Suggestions for a better version
-• Steering toward the given answer
-The critical comments should:
-• Be specific and actionable
-• Reference particular parts of the draft
-• Suggest concrete improvements
-• Consider different angles or approaches
-• Guide towards a more comprehensive solution
-Output Format:
-• Draft Response:
-Your initial complete response to the instruction.
-• Critical Comments:
-Your analysis of the draft response, highlighting areas for improvement and suggesting specific enhancements.
-• Final Answer:
-Put your final answer within \\boxed{}.
+        prompt = """Put your final answer within \\boxed{}.
 
 """
 
