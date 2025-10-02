@@ -578,7 +578,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             if videos_nd[0].shape[0] > VLLM_MAX_IMAGE_INPUT_NUM:
                 print('video input sequence may be too long for vllm, Maybe cannot generate response for VLLM')
         sampling_params = SamplingParams(
-            temperature=0.0, max_tokens=self.max_new_tokens, stop_token_ids=None
+            temperature=0.7, max_tokens=self.max_new_tokens, stop_token_ids=None
         )
         if images:
             outputs = self.llm.generate(
