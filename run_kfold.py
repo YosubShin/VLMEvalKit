@@ -361,7 +361,7 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
                     # Parse the batch_idx to get original index and k_iter
                     parts = str(batch_idx).split('_k')
                     if len(parts) == 2:
-                        orig_index = parts[0]
+                        orig_index = int(parts[0])
                         iter_num = int(parts[1])
 
                         # Store the result
@@ -402,7 +402,7 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
             # Parse the batch_idx to get original index and k_iter
             parts = str(batch_idx).split('_k')
             if len(parts) == 2:
-                orig_index = parts[0]
+                orig_index = int(parts[0])
                 iter_num = int(parts[1])
 
                 # Store the result
