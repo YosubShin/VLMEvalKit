@@ -114,7 +114,7 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
             from ..tools import encode_image_to_base64
 
             # Load from HuggingFace
-            hf_dataset = load_dataset('WaltonFuture/Multimodal-Cold-Start', split='train')
+            hf_dataset = load_dataset('oumi-ai/walton-multimodal-cold-start-r1-format', split='train')
 
             # Convert to tsv format expected by VLMEvalKit
             data_list = []
