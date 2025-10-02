@@ -102,7 +102,7 @@ Usage:
 
 def build_model(model_name, **kwargs):
     """Build and return the model for inference."""
-    logger = get_logger('RUN_KFold')
+    logger = get_logger('RUN')
 
     if model_name in supported_VLM:
         model_cls = supported_VLM[model_name]
@@ -145,7 +145,7 @@ def infer_kfold_batch(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base
     Returns:
         dict: Results with k predictions per index
     """
-    logger = get_logger('RUN_KFold')
+    logger = get_logger('RUN')
 
     # Check if batch processing is available and should be used
     if batch_size and hasattr(model, 'supports_batch_processing') and model.supports_batch_processing():
@@ -176,7 +176,7 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
     """
     from vlmeval.utils.batch_processing import BatchCollector, BatchProcessor
 
-    logger = get_logger('RUN_KFold')
+    logger = get_logger('RUN')
     dataset_name = dataset.dataset_name
     model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
 
@@ -381,7 +381,7 @@ def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
     Returns:
         dict: Results with k predictions per index
     """
-    logger = get_logger('RUN_KFold')
+    logger = get_logger('RUN')
     dataset_name = dataset.dataset_name
     model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
 
@@ -552,7 +552,7 @@ def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', **judge_kwa
     Returns:
         pd.DataFrame: DataFrame with verdicts for each prediction
     """
-    logger = get_logger('RUN_KFold')
+    logger = get_logger('RUN')
     dataset_name = dataset.dataset_name
     logger.info(f"Evaluating k-fold predictions for {dataset_name}")
 
@@ -641,7 +641,7 @@ def main():
     if isinstance(dataset_names, str):
         dataset_names = [dataset_names]
 
-    logger = get_logger('RUN_KFold')
+    logger = get_logger('RUN')
     logger.info(f"Starting k-fold inference with k={args.k}")
     logger.info(f"Model: {model_name}")
     logger.info(f"Datasets: {dataset_names}")
