@@ -725,6 +725,9 @@ def main():
     """Main function for k-fold inference."""
     args = parse_args()
 
+    # Initialize logger early
+    logger = get_logger('RUN')
+
     # Initialize distributed if using multiple GPUs
     if WORLD_SIZE > 1:
         import torch.distributed as dist
@@ -757,7 +760,7 @@ def main():
         model_name = args.model
         use_custom_model = False
     else:
-        print("ERROR: Either --model or --pass-custom-model must be specified")
+        logger.error("ERROR: Either --model or --pass-custom-model must be specified")
         sys.exit(1)
 
     dataset_names = args.data
@@ -766,7 +769,6 @@ def main():
     if isinstance(dataset_names, str):
         dataset_names = [dataset_names]
 
-    logger = get_logger('RUN')
     logger.info(f"Starting k-fold inference with k={args.k}")
     logger.info(f"Model: {model_name}")
     logger.info(f"Datasets: {dataset_names}")
