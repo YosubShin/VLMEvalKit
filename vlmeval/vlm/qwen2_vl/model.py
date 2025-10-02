@@ -786,7 +786,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
 
         # Set up sampling parameters
         sampling_params = SamplingParams(
-            temperature=0.0,
+            temperature=0.7,
             max_tokens=self.max_new_tokens,
             stop_token_ids=None
         )
