@@ -215,7 +215,11 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
 
     logger = get_logger('RUN')
     dataset_name = dataset.dataset_name
-    model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
+    # Use a clean model name, avoiding path separators
+    if hasattr(model, 'model_name') and model.model_name:
+        model_name = model.model_name.replace('/', '_').replace('\\', '_')
+    else:
+        model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
 
     # Get rank and world size for distributed processing
     rank, world_size = get_rank_and_world_size()
@@ -439,7 +443,11 @@ def infer_kfold(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base=42,
     """
     logger = get_logger('RUN')
     dataset_name = dataset.dataset_name
-    model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
+    # Use a clean model name, avoiding path separators
+    if hasattr(model, 'model_name') and model.model_name:
+        model_name = model.model_name.replace('/', '_').replace('\\', '_')
+    else:
+        model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
 
     # Get rank and world size for distributed processing
     rank, world_size = get_rank_and_world_size()
