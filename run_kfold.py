@@ -206,8 +206,15 @@ def infer_kfold_batch(model, dataset, k=8, temperature=0.7, top_p=0.9, seed_base
                          work_dir, verbose, reuse)
 
 
+def get_model_name(model):
+    """Get consistent model name for file naming"""
+    if hasattr(model, 'model_name') and model.model_name:
+        return model.model_name.replace('/', '_').replace('\\', '_')
+    else:
+        return model.__class__.__name__ if hasattr(model, '__class__') else str(model)
+
 def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
-                        temperature, top_p, seed_base, work_dir, verbose, reuse):
+                        temperature, top_p, seed_base, work_dir, verbose, reuse, model_name=None):
     """
     Internal function for batched k-fold inference using existing batch processing infrastructure.
     Supports multi-GPU by splitting dataset across ranks.
@@ -216,11 +223,9 @@ def _infer_kfold_batched(model, dataset, k, prompts_per_batch, batch_size,
 
     logger = get_logger('RUN')
     dataset_name = dataset.dataset_name
-    # Use a clean model name, avoiding path separators
-    if hasattr(model, 'model_name') and model.model_name:
-        model_name = model.model_name.replace('/', '_').replace('\\', '_')
-    else:
-        model_name = model.__class__.__name__ if hasattr(model, '__class__') else str(model)
+    # Use provided model_name or derive from model
+    if model_name is None:
+        model_name = get_model_name(model)
 
     # Get rank and world size for distributed processing
     rank, world_size = get_rank_and_world_size()
