@@ -306,6 +306,10 @@ Respond with a JSON containing:
 
             from tqdm import tqdm
 
+            # Debug logging of first prompt/response
+            logger = get_logger("WALTON_EVAL")
+            logged_sample = False
+
             with tqdm(total=total_items, desc="Evaluating with judge model") as pbar:
                 for i in range(0, total_items, batch_size):
                     # Get batch of data
@@ -319,6 +323,13 @@ Respond with a JSON containing:
                         )
                         for _, row in batch_data.iterrows()
                     ]
+
+                    if not logged_sample and len(batch_prompts) > 0:
+                        try:
+                            logger.info("=== Sample Judge Prompt (first only) ===")
+                            logger.info(batch_prompts[0])
+                        except Exception:
+                            pass
 
                     # Generate responses for the batch
                     if use_vllm_judge:
@@ -342,6 +353,14 @@ Respond with a JSON containing:
                         except Exception as e:
                             print(f"Error in batch generation: {e}")
                             batch_responses = [""] * len(batch_prompts)
+
+                    if not logged_sample and len(batch_responses) > 0:
+                        try:
+                            logger.info("=== Sample Judge Response (first only) ===")
+                            logger.info(str(batch_responses[0])[:2000])
+                        except Exception:
+                            pass
+                        logged_sample = True
 
                     # Parse responses
                     batch_verdicts = [
