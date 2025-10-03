@@ -358,6 +358,9 @@ Respond with a JSON containing:
                         try:
                             logger.info("=== Sample Judge Response (first only) ===")
                             logger.info(str(batch_responses[0])[:2000])
+
+                            logger.info("=== Sample Judge Response (whole batch) ===")
+                            logger.info(batch_responses)
                         except Exception:
                             pass
                         logged_sample = True
