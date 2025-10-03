@@ -27,13 +27,28 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
             gpu_count = torch.cuda.device_count()
             tp_size = min(gpu_count, 4)  # Use at most 4 GPUs for judge model
 
-            llm = LLM(
-                model=model_path,
-                max_num_seqs=batch_size,
-                tensor_parallel_size=tp_size,
-                gpu_memory_utilization=0.9,  # Make sure to unload main model before evaluation
-                max_model_len=8192,  # Judge prompts are short
-            )
+            vllm_params = {
+                'model': model_path,
+                'max_num_seqs': batch_size,
+                'tensor_parallel_size': tp_size,
+                'gpu_memory_utilization': 0.9,  # Make sure to unload main model before evaluation
+                'max_model_len': 8192,  # Judge prompts are short
+            }
+
+            from ..smp import get_logger
+            logger = get_logger('VLLM_JUDGE')
+
+            logger.info("=== VLLM Judge Instantiation Parameters ===")
+            logger.info(f"Model path: {model_path}")
+            logger.info(f"Batch size (max_num_seqs): {batch_size}")
+            logger.info(f"Tensor parallel size: {tp_size}")
+            logger.info(f"GPU count available: {gpu_count}")
+            logger.info(f"GPU memory utilization: {vllm_params['gpu_memory_utilization']}")
+            logger.info(f"Max model length: {vllm_params['max_model_len']}")
+            logger.info(f"Additional kwargs: {kwargs}")
+            logger.info("=" * 50)
+
+            llm = LLM(**vllm_params)
 
             # Wrap in a simple interface
             class VLLMJudge:
@@ -50,9 +65,18 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
                     if isinstance(prompts, str):
                         prompts = [prompts]
 
+                    from ..smp import get_logger
+                    logger = get_logger('VLLM_JUDGE')
+
+                    logger.info("=== VLLM Judge Generation ===")
+                    logger.info(f"Processing batch of {len(prompts)} prompts")
+                    logger.info(f"Sampling params: temp={self.sampling_params.temperature}, max_tokens={self.sampling_params.max_tokens}")
+                    logger.info("=" * 30)
+
                     outputs = self.llm.generate(prompts, self.sampling_params)
                     responses = [output.outputs[0].text for output in outputs]
 
+                    logger.info(f"Generated {len(responses)} responses")
                     return responses if len(responses) > 1 else responses[0]
 
                 def __del__(self):
