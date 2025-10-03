@@ -117,11 +117,7 @@ Usage:
         default=None,
         help="Path to a HuggingFace repository or local model directory",
     )
-    parser.add_argument(
-        "--use-vllm",
-        action="store_true",
-        help="Use VLLM for generation (faster inference)",
-    )
+    # VLLM is required for k-fold; do not expose a toggle
     parser.add_argument(
         "--batch-size", type=int, default=None, help="Batch size for VLLM inference"
     )
@@ -131,6 +127,7 @@ Usage:
         default=None,
         help="Maximum output tokens for generation",
     )
+    # Note: When using VLLM, we will set SamplingParams.n = k
 
     # Resume/Reuse Settings
     parser.add_argument(
@@ -242,6 +239,10 @@ def infer_kfold_batch(
     """
     logger = get_logger("RUN")
 
+    # Enforce specialized multi-n batch API
+    if not hasattr(model, "generate_batch_with_n"):
+        raise RuntimeError("Model must implement generate_batch_with_n for k-fold")
+
     # Check if batch processing is available and should be used
     if (
         batch_size
@@ -250,8 +251,9 @@ def infer_kfold_batch(
     ):
         logger.info(f"Using batch k-fold inference with batch_size={batch_size}, k={k}")
 
-        # Calculate how many prompts can fit in a batch
-        prompts_per_batch = batch_size // k
+        # With VLLM n>1 we generate n candidates per prompt in one call
+        # so we only need 1 iteration per prompt
+        prompts_per_batch = batch_size
         if prompts_per_batch < 1:
             logger.warning(
                 f"Batch size {batch_size} is smaller than k={k}, falling back to regular k-fold"
@@ -333,7 +335,7 @@ def _infer_kfold_batched(
     rank, world_size = get_rank_and_world_size()
 
     logger.info(
-        f"Starting batched k-fold inference with k={k}, batch_size={batch_size}"
+        f"Starting batched inference with {k} predictions per prompt, batch_size={batch_size}"
     )
     logger.info(f"Model: {model_name}, Dataset: {dataset_name}")
     logger.info(f"Temperature: {temperature}, Top-p: {top_p}")
@@ -459,12 +461,11 @@ def _infer_kfold_batched(
         else:
             prompt_struct = dataset.build_prompt(row)
 
-        # Add k iterations of this prompt to the batch collector
+        # Add a single generation request per prompt (VLLM can return n candidates)
         existing_preds = len(results[index]["predictions"])
-        for k_iter in range(existing_preds, k):
-            # Add to batch collector (it will return a ready batch when full)
+        if existing_preds < k:
             ready_batch = collector.add_item(
-                f"{index}_k{k_iter}",  # Unique ID for this k-iteration
+                index,
                 prompt_struct,
                 dataset_name,
             )
@@ -472,35 +473,31 @@ def _infer_kfold_batched(
             if ready_batch:
                 # Process the ready batch
                 if verbose:
-                    logger.info(f"Processing batch of {len(ready_batch)} k-iterations")
+                    logger.info(f"Processing batch of {len(ready_batch)} prompts")
 
-                batch_results = processor.process_batch(ready_batch)
-
-                # Store results (batch_results is a list of (index, response) tuples)
-                for batch_idx, response in batch_results:
-                    # Parse the batch_idx to get original index and k_iter
-                    parts = str(batch_idx).split("_k")
-                    if len(parts) == 2:
-                        orig_index = int(parts[0])
-                        iter_num = int(parts[1])
-
-                        # Store the result
-                        if orig_index in results:
-                            results[orig_index]["predictions"].append(response)
-                            results[orig_index]["metadata"]["temperatures"].append(
-                                temperature
-                            )
-                            results[orig_index]["metadata"]["seeds"].append(
-                                seed_base + iter_num
-                            )
-                            results[orig_index]["metadata"]["top_p_values"].append(
-                                top_p
-                            )
-
-                            if verbose and iter_num == 0:
-                                logger.info(
-                                    f"Index {orig_index} - First response: {response[:100]}..."
-                                )
+                # Use specialized multi-n API to guarantee alignment
+                messages = [item.message for item in ready_batch]
+                nested = model.generate_batch_with_n(
+                    messages, dataset=dataset_name, k=k
+                )
+                for i, out_list in enumerate(nested):
+                    orig_index = int(ready_batch[i].index)
+                    if orig_index in results:
+                        candidates = (
+                            out_list if isinstance(out_list, list) else [out_list]
+                        )
+                        needed = k - len(results[orig_index]["predictions"])
+                        to_add = candidates[:needed]
+                        results[orig_index]["predictions"].extend(to_add)
+                        results[orig_index]["metadata"]["temperatures"].extend(
+                            [temperature] * len(to_add)
+                        )
+                        results[orig_index]["metadata"]["seeds"].extend(
+                            [seed_base] * len(to_add)
+                        )
+                        results[orig_index]["metadata"]["top_p_values"].extend(
+                            [top_p] * len(to_add)
+                        )
 
                 save_counter += 1
                 # Save periodically
@@ -521,26 +518,26 @@ def _infer_kfold_batched(
     final_batches = collector.flush_all()
     for final_batch in final_batches:
         if verbose:
-            logger.info(f"Processing final batch of {len(final_batch)} k-iterations")
+            logger.info(f"Processing final batch of {len(final_batch)} prompts")
 
-        batch_results = processor.process_batch(final_batch)
-
-        # Store results (batch_results is a list of (index, response) tuples)
-        for batch_idx, response in batch_results:
-            # Parse the batch_idx to get original index and k_iter
-            parts = str(batch_idx).split("_k")
-            if len(parts) == 2:
-                orig_index = int(parts[0])
-                iter_num = int(parts[1])
-
-                # Store the result
-                if orig_index in results:
-                    results[orig_index]["predictions"].append(response)
-                    results[orig_index]["metadata"]["temperatures"].append(temperature)
-                    results[orig_index]["metadata"]["seeds"].append(
-                        seed_base + iter_num
-                    )
-                    results[orig_index]["metadata"]["top_p_values"].append(top_p)
+        messages = [item.message for item in final_batch]
+        nested = model.generate_batch_with_n(messages, dataset=dataset_name, k=k)
+        for i, out_list in enumerate(nested):
+            orig_index = int(final_batch[i].index)
+            if orig_index in results:
+                candidates = out_list if isinstance(out_list, list) else [out_list]
+                needed = k - len(results[orig_index]["predictions"])
+                to_add = candidates[:needed]
+                results[orig_index]["predictions"].extend(to_add)
+                results[orig_index]["metadata"]["temperatures"].extend(
+                    [temperature] * len(to_add)
+                )
+                results[orig_index]["metadata"]["seeds"].extend(
+                    [seed_base] * len(to_add)
+                )
+                results[orig_index]["metadata"]["top_p_values"].extend(
+                    [top_p] * len(to_add)
+                )
 
     progress_bar.close()
 
@@ -675,48 +672,92 @@ def infer_kfold(
         else:
             prompt_struct = dataset.build_prompt(row)
 
-        # Generate k predictions
+        # Generate predictions
         existing_preds = len(results[index]["predictions"])
-        for k_iter in range(existing_preds, k):
-            # Set seed for reproducibility
-            current_seed = seed_base + k_iter
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed(current_seed)
-            torch.manual_seed(current_seed)
+        use_vllm_multi = (
+            hasattr(model, "use_vllm")
+            and model.use_vllm
+            and hasattr(model, "vllm_n")
+            and model.vllm_n
+            and model.vllm_n > 1
+        )
 
+        if use_vllm_multi:
+            # Single VLLM call can return multiple candidates (n=k)
             # Temporarily set model parameters if possible
             original_temp = getattr(model, "temperature", None)
             original_top_p = getattr(model, "top_p", None)
-
             try:
                 if hasattr(model, "temperature"):
                     model.temperature = temperature
                 if hasattr(model, "top_p"):
                     model.top_p = top_p
 
-                # Generate response
                 response = model.generate(message=prompt_struct, dataset=dataset_name)
 
-                # Store result
-                results[index]["predictions"].append(response)
-                results[index]["temperatures"].append(temperature)
-                results[index]["seeds"].append(current_seed)
-
-                if verbose:
-                    print(
-                        f"Index {index}, Iteration {k_iter+1}/{k}: {response[:100]}..."
-                    )
-
+                # response may be a list of candidates
+                if isinstance(response, list):
+                    needed = k - existing_preds
+                    to_add = response[:needed]
+                    results[index]["predictions"].extend(to_add)
+                    results[index]["temperatures"].extend([temperature] * len(to_add))
+                    results[index]["seeds"].extend([seed_base] * len(to_add))
+                else:
+                    results[index]["predictions"].append(response)
+                    results[index]["temperatures"].append(temperature)
+                    results[index]["seeds"].append(seed_base)
             finally:
-                # Restore original parameters
                 if original_temp is not None and hasattr(model, "temperature"):
                     model.temperature = original_temp
                 if original_top_p is not None and hasattr(model, "top_p"):
                     model.top_p = original_top_p
 
-            # Clear GPU cache
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+        else:
+            # Sequential generation of k predictions
+            for k_iter in range(existing_preds, k):
+                # Set seed for reproducibility
+                current_seed = seed_base + k_iter
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed(current_seed)
+                torch.manual_seed(current_seed)
+
+                # Temporarily set model parameters if possible
+                original_temp = getattr(model, "temperature", None)
+                original_top_p = getattr(model, "top_p", None)
+
+                try:
+                    if hasattr(model, "temperature"):
+                        model.temperature = temperature
+                    if hasattr(model, "top_p"):
+                        model.top_p = top_p
+
+                    # Generate response
+                    response = model.generate(
+                        message=prompt_struct, dataset=dataset_name
+                    )
+
+                    # Store result
+                    results[index]["predictions"].append(response)
+                    results[index]["temperatures"].append(temperature)
+                    results[index]["seeds"].append(current_seed)
+
+                    if verbose:
+                        print(
+                            f"Index {index}, Iteration {k_iter+1}/{k}: {response[:100]}..."
+                        )
+
+                finally:
+                    # Restore original parameters
+                    if original_temp is not None and hasattr(model, "temperature"):
+                        model.temperature = original_temp
+                    if original_top_p is not None and hasattr(model, "top_p"):
+                        model.top_p = original_top_p
+
+                # Clear GPU cache
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         # Save progress periodically
         if (pbar.n + 1) % 10 == 0:
@@ -1027,8 +1068,7 @@ def main():
     logger.info(f"Starting k-fold inference with k={args.k}")
     logger.info(f"Model: {model_name}")
     logger.info(f"Datasets: {dataset_names}")
-    if args.use_vllm:
-        logger.info("Using VLLM for acceleration")
+    logger.info("Using VLLM for acceleration")
 
     # Build model kwargs
     model_kwargs = {}
@@ -1036,8 +1076,8 @@ def main():
         model_kwargs["verbose"] = True
     if args.retry:
         model_kwargs["retry"] = args.retry
-    if args.use_vllm:
-        model_kwargs["use_vllm"] = True
+    # VLLM is required
+    model_kwargs["use_vllm"] = True
     if args.batch_size:
         model_kwargs["batch_size"] = args.batch_size
     if args.max_output_tokens:
@@ -1046,6 +1086,9 @@ def main():
         model_kwargs["temperature"] = args.temperature
     if args.top_p:
         model_kwargs["top_p"] = args.top_p
+    # Drive VLLM candidate count from k
+    if args.k:
+        model_kwargs["n"] = args.k
 
     # Handle nproc/api-nproc
     nproc = args.api_nproc if args.api_nproc else args.nproc

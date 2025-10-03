@@ -229,6 +229,9 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         assert model_path is not None
         self.model_path = model_path
         MODEL_CLS = None
+        # Number of samples to generate per prompt when using VLLM (SamplingParams.n)
+        # Set by caller (run_kfold) as n=k when using VLLM
+        self.vllm_n = kwargs.get("n", 1)
 
         if listinstr(["omni"], model_path.lower()):
             try:
@@ -672,7 +675,13 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                     "video input sequence may be too long for vllm, Maybe cannot generate response for VLLM"
                 )
         sampling_params = SamplingParams(
-            temperature=0.3, max_tokens=self.max_new_tokens, stop_token_ids=None
+            temperature=self.generate_kwargs.get("temperature", 0.7),
+            top_p=self.generate_kwargs.get("top_p", 0.9),
+            top_k=self.generate_kwargs.get("top_k", None),
+            repetition_penalty=self.generate_kwargs.get("repetition_penalty", 1.0),
+            max_tokens=self.max_new_tokens,
+            stop_token_ids=None,
+            n=self.vllm_n,
         )
         if images:
             outputs = self.llm.generate(
@@ -695,6 +704,44 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                 sampling_params=sampling_params,
             )
 
+        # Extract texts; support multiple candidates when n > 1
+        generated_text = None
+        if self.vllm_n and self.vllm_n > 1:
+            try:
+                o = outputs[0]
+                cand_texts = [cand.text for cand in o.outputs]
+            except Exception:
+                cand_texts = [o.outputs[0].text for o in outputs]
+
+            # Post-process each candidate if needed
+            processed_texts = []
+            for txt in cand_texts:
+                t = txt
+                if self.post_process:
+                    resp = t.split("\\boxed{")[-1]
+                    lt = len(resp)
+                    counter, end = 1, None
+                    for i in range(lt):
+                        if resp[i] == "{":
+                            counter += 1
+                        elif resp[i] == "}":
+                            counter -= 1
+                        if counter == 0:
+                            end = i
+                            break
+                        elif i == lt - 1:
+                            end = lt
+                            break
+                    if end is not None:
+                        t = resp[:end]
+                processed_texts.append(t)
+
+            if self.verbose:
+                for pt in processed_texts[:3]:
+                    print(f"\033[32m{pt}\033[0m")
+            return processed_texts
+
+        # Default single-candidate behavior
         for o in outputs:
             generated_text = o.outputs[0].text
 
@@ -907,7 +954,13 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
 
         # Set up sampling parameters
         sampling_params = SamplingParams(
-            temperature=0.3, max_tokens=self.max_new_tokens, stop_token_ids=None
+            temperature=self.generate_kwargs.get("temperature", 0.7),
+            top_p=self.generate_kwargs.get("top_p", 0.9),
+            top_k=self.generate_kwargs.get("top_k", None),
+            repetition_penalty=self.generate_kwargs.get("repetition_penalty", 1.0),
+            max_tokens=self.max_new_tokens,
+            stop_token_ids=None,
+            n=self.vllm_n,
         )
 
         # Generate with VLLM batch processing
@@ -921,31 +974,59 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             results = []
             for i, output in enumerate(outputs):
                 try:
-                    generated_text = output.outputs[0].text
-
-                    # Apply post-processing if needed
-                    if self.post_process:
-                        resp = generated_text.split("\\boxed{")[-1]
-                        lt = len(resp)
-                        counter, end = 1, None
-                        for j in range(lt):
-                            if resp[j] == "{":
-                                counter += 1
-                            elif resp[j] == "}":
-                                counter -= 1
-                            if counter == 0:
-                                end = j
-                                break
-                            elif j == lt - 1:
-                                end = lt
-                                break
-                        if end is not None:
-                            generated_text = resp[:end]
-
-                    results.append(generated_text)
-
-                    if self.verbose:
-                        print(f"[QWEN VLLM BATCH] Item {i}: {generated_text[:50]}...")
+                    # Multiple candidates when n > 1
+                    if hasattr(self, "vllm_n") and self.vllm_n and self.vllm_n > 1:
+                        cand_texts = [cand.text for cand in output.outputs]
+                        processed = []
+                        for generated_text in cand_texts:
+                            if self.post_process:
+                                resp = generated_text.split("\\boxed{")[-1]
+                                lt = len(resp)
+                                counter, end = 1, None
+                                for j in range(lt):
+                                    if resp[j] == "{":
+                                        counter += 1
+                                    elif resp[j] == "}":
+                                        counter -= 1
+                                    if counter == 0:
+                                        end = j
+                                        break
+                                    elif j == lt - 1:
+                                        end = lt
+                                        break
+                                if end is not None:
+                                    generated_text = resp[:end]
+                            processed.append(generated_text)
+                        results.append(processed)
+                        if self.verbose:
+                            preview = processed[0] if processed else ""
+                            print(
+                                f"[QWEN VLLM BATCH] Item {i}: {preview[:50]}... (n={len(processed)})"
+                            )
+                    else:
+                        generated_text = output.outputs[0].text
+                        if self.post_process:
+                            resp = generated_text.split("\\boxed{")[-1]
+                            lt = len(resp)
+                            counter, end = 1, None
+                            for j in range(lt):
+                                if resp[j] == "{":
+                                    counter += 1
+                                elif resp[j] == "}":
+                                    counter -= 1
+                                if counter == 0:
+                                    end = j
+                                    break
+                                elif j == lt - 1:
+                                    end = lt
+                                    break
+                            if end is not None:
+                                generated_text = resp[:end]
+                        results.append(generated_text)
+                        if self.verbose:
+                            print(
+                                f"[QWEN VLLM BATCH] Item {i}: {generated_text[:50]}..."
+                            )
 
                 except Exception as e:
                     if self.verbose:
@@ -960,6 +1041,42 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             logging.error(f"VLLM batch generation failed: {e}")
             # Return error responses for all items
             return ["ERROR: Batch generation failed"] * len(vllm_inputs)
+
+    def generate_batch_with_n(
+        self, batch_messages: list, dataset: str = None, k: int = 1
+    ) -> list:
+        """Generate a batch where each prompt returns up to k candidates.
+
+        Always returns a list of lists aligned to input order; inner lists are length k,
+        padded with empty strings if fewer candidates are produced, truncated if more.
+        """
+        if not self.use_vllm:
+            # Fallback: sequentially call generate and duplicate if needed
+            results = []
+            for msg in batch_messages:
+                out = self.generate_inner(msg, dataset=dataset)
+                if isinstance(out, list):
+                    row = (out + [""] * k)[:k]
+                else:
+                    row = [out] + [""] * (k - 1)
+                results.append(row)
+            return results
+
+        # Temporarily set n to k for this call
+        original_n = getattr(self, "vllm_n", 1)
+        self.vllm_n = max(1, int(k))
+        try:
+            flat = self.generate_batch_vllm(batch_messages, dataset=dataset)
+            results = []
+            for item in flat:
+                if isinstance(item, list):
+                    row = (item + [""] * k)[:k]
+                else:
+                    row = [item] + [""] * (k - 1)
+                results.append(row)
+            return results
+        finally:
+            self.vllm_n = original_n
 
 
 class Qwen2VLChatAguvis(Qwen2VLChat):
