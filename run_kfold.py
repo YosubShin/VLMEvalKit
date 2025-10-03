@@ -823,13 +823,6 @@ def main():
     if nproc:
         model_kwargs['nproc'] = nproc
 
-    # Build the model
-    if use_custom_model:
-        # For custom models, model_name is already the registered clean name
-        model = build_model(model_name, **model_kwargs)
-    else:
-        model = build_model(model_name, **model_kwargs)
-
     # Process each dataset
     for dataset_name in dataset_names:
         logger.info(f"\nProcessing dataset: {dataset_name}")
@@ -841,19 +834,47 @@ def main():
         # Build dataset
         dataset = build_dataset(dataset_name)
 
-        # Run k-fold inference (with batch optimization if available)
-        kfold_results = infer_kfold_batch(
-            model=model,
-            dataset=dataset,
-            k=args.k,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            seed_base=args.seed_base,
-            work_dir=model_work_dir,  # Use model-specific directory
-            verbose=args.verbose,
-            reuse=args.reuse,
-            batch_size=args.batch_size
-        )
+        # Check if inference results already exist
+        inference_file = osp.join(model_work_dir, f'{model_name}_{dataset_name}_k{args.k}.pkl')
+        predictions_file = osp.join(model_work_dir, f'{model_name}_{dataset_name}_k{args.k}_predictions.xlsx')
+
+        need_inference = not (osp.exists(inference_file) and args.reuse)
+        need_evaluation = args.judge and (not osp.exists(predictions_file.replace('_predictions.xlsx', '_evaluated.xlsx')) or not args.reuse)
+
+        # Skip everything if both inference and evaluation are already done
+        if not need_inference and not need_evaluation:
+            logger.info("Both inference and evaluation already completed, skipping...")
+            continue
+
+        model = None
+        kfold_results = None
+
+        if need_inference:
+            logger.info("Building model for inference...")
+            # Build the model only if we need to do inference
+            if use_custom_model:
+                model = build_model(model_name, **model_kwargs)
+            else:
+                model = build_model(model_name, **model_kwargs)
+
+            # Run k-fold inference (with batch optimization if available)
+            kfold_results = infer_kfold_batch(
+                model=model,
+                dataset=dataset,
+                k=args.k,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                seed_base=args.seed_base,
+                work_dir=model_work_dir,
+                verbose=args.verbose,
+                reuse=args.reuse,
+                batch_size=args.batch_size
+            )
+        else:
+            logger.info("Inference results exist and reuse=True, skipping inference")
+            if need_evaluation:
+                # Load existing results for evaluation
+                kfold_results = load(inference_file)
 
         # Synchronize all ranks before merging
         if WORLD_SIZE > 1:
@@ -879,8 +900,8 @@ def main():
             df_predictions.to_excel(pred_file, index=False)
             logger.info(f"Predictions saved to {pred_file}")
 
-        # Free GPU memory from inference model before evaluation
-        if args.use_vllm and hasattr(model, 'llm'):
+        # Free GPU memory from inference model before evaluation (only if we loaded it)
+        if model is not None and args.use_vllm and hasattr(model, 'llm'):
             logger.info("Freeing VLLM GPU memory before evaluation...")
             del model.llm
             del model
@@ -889,12 +910,20 @@ def main():
             gc.collect()
             torch.cuda.synchronize()
             logger.info("GPU memory freed")
+            model = None
 
         # Evaluate if judge is available
-        if hasattr(dataset, 'evaluate') and RANK == 0:
+        if hasattr(dataset, 'evaluate') and RANK == 0 and need_evaluation:
+            # Load kfold_results if we skipped inference but need evaluation
+            if kfold_results is None:
+                logger.info("Loading existing results for evaluation")
+                kfold_results = load(inference_file)
+                df_predictions = convert_to_dataframe(kfold_results, args.k)
+
             # Determine if we should use VLLM for judge
             use_vllm_judge = args.judge and not args.judge.startswith('gpt')
 
+            logger.info(f"Starting evaluation with judge: {args.judge}")
             judge_kwargs = {
                 'model': args.judge if args.judge else 'gpt-4o-mini',
                 'batch_size': args.batch_size if args.batch_size else 32,
