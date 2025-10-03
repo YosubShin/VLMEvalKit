@@ -270,14 +270,13 @@ Model's Answer: {pred_answer}
 Ground Truth: {gt_answer}
 """
                 if choices_map:
-                    prompt += f"\nChoices:\n{choices_map}\n"
+                    prompt += f"\nMultiple Choice Options:\n{choices_map}\n"
 
                 prompt += """
 Please evaluate whether the model's answer is correct compared to the ground truth. Consider:
 1. Mathematical equivalence (e.g., 58% and 58 are the same)
 2. Numerical precision (allow for minor rounding differences)
 3. Unit consistency (if units are provided)
-4. "A. (answer string)" and "A" are the same when option mappings are provided.
 
 Respond with a JSON containing:
 {"verdict": 1} if the answer is correct
@@ -324,12 +323,7 @@ Respond with a JSON containing:
                         for _, row in batch_data.iterrows()
                     ]
 
-                    if not logged_sample and len(batch_prompts) > 0:
-                        try:
-                            logger.info("=== Sample Judge Prompt (first only) ===")
-                            logger.info(batch_prompts[0])
-                        except Exception:
-                            pass
+                    # Log the entire first batch with colocated prompt/response pairs
 
                     # Generate responses for the batch
                     if use_vllm_judge:
@@ -356,11 +350,15 @@ Respond with a JSON containing:
 
                     if not logged_sample and len(batch_responses) > 0:
                         try:
-                            logger.info("=== Sample Judge Response (first only) ===")
-                            logger.info(str(batch_responses[0])[:2000])
-
-                            logger.info("=== Sample Judge Response (whole batch) ===")
-                            logger.info(batch_responses)
+                            logger.info(
+                                "=== First batch judge prompt/response pairs ==="
+                            )
+                            for j, (p, r) in enumerate(
+                                zip(batch_prompts, batch_responses)
+                            ):
+                                logger.info(
+                                    f"--- Item {j} ---\nPrompt:\n{p}\n\nResponse:\n{str(r)}"
+                                )
                         except Exception:
                             pass
                         logged_sample = True
