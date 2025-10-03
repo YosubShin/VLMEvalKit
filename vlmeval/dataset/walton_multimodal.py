@@ -232,26 +232,58 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
                     return matches[-1].strip()
                 return text.strip()
 
-            def create_judge_prompt(prediction, ground_truth):
-                """Create a judge prompt for a single prediction"""
+            def create_judge_prompt(prediction, ground_truth, question_text=None):
+                """Create a judge prompt for a single prediction with optional choices mapping."""
+                import re
+
+                def extract_options_block(qtext):
+                    if not qtext:
+                        return None
+                    m = re.search(
+                        r"\n(?:Choices|Options)\s*:?[\t ]*\n",
+                        qtext,
+                        flags=re.IGNORECASE,
+                    )
+                    if not m:
+                        return None
+                    tail = qtext[m.end() :]
+                    block_lines = []
+                    for raw in tail.splitlines():
+                        if raw.strip() == "":
+                            break
+                        # Preserve each line exactly as-is
+                        block_lines.append(raw)
+                    if not block_lines:
+                        return None
+                    return "\n".join(block_lines)
+
                 pred_answer = extract_answer(str(prediction))
                 gt_answer = extract_answer(str(ground_truth))
+                choices_map = (
+                    extract_options_block(question_text) if question_text else None
+                )
 
-                return f"""You are evaluating a model's answer against the ground truth for a reasoning problem.
+                prompt = f"""You are evaluating a model's answer against the ground truth for a reasoning problem.
 
 Model's Answer: {pred_answer}
 
 Ground Truth: {gt_answer}
+"""
+                if choices_map:
+                    prompt += f"\nChoices:\n{choices_map}\n"
 
+                prompt += """
 Please evaluate whether the model's answer is correct compared to the ground truth. Consider:
 1. Mathematical equivalence (e.g., 58% and 58 are the same)
 2. Numerical precision (allow for minor rounding differences)
 3. Unit consistency (if units are provided)
+4. "A. (answer string)" and "A" are the same when option mappings are provided.
 
 Respond with a JSON containing:
-{{"verdict": 1}} if the answer is correct
-{{"verdict": 0}} if the answer is incorrect
+{"verdict": 1} if the answer is correct
+{"verdict": 0} if the answer is incorrect
 """
+                return prompt
 
             def parse_judge_response(response):
                 """Parse the judge's response to extract verdict"""
@@ -282,7 +314,9 @@ Respond with a JSON containing:
 
                     # Create batch of prompts
                     batch_prompts = [
-                        create_judge_prompt(row["prediction"], row["answer"])
+                        create_judge_prompt(
+                            row["prediction"], row["answer"], row.get("question", None)
+                        )
                         for _, row in batch_data.iterrows()
                     ]
 
