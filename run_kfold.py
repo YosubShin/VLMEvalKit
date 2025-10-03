@@ -1189,7 +1189,7 @@ def main():
             logger.info(f"Predictions saved to {pred_file}")
 
         # Free GPU memory from inference model before evaluation (only if we loaded it)
-        if model is not None and args.use_vllm and hasattr(model, "llm"):
+        if model is not None and hasattr(model, "llm"):
             logger.info("Freeing VLLM GPU memory before evaluation...")
             del model.llm
             del model
