@@ -648,9 +648,11 @@ def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', judge_model
 
         if use_vllm_judge and not model_name.startswith('gpt'):
             logger.info(f"Building VLLM judge model: {model_name}")
+            # Extract batch_size to avoid duplicate argument
+            batch_size = judge_kwargs.pop('batch_size', 32)
             judge_model = dataset._build_vllm_judge(
                 model_name,
-                batch_size=judge_kwargs.get('batch_size', 32),
+                batch_size=batch_size,
                 **judge_kwargs
             )
         else:
