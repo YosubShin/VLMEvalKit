@@ -289,9 +289,11 @@ Please evaluate whether the model's answer is correct compared to the ground tru
 
                 prompt += """
 
-Respond with a JSON containing:
-{"verdict": 1} if the answer is correct
-{"verdict": 0} if the answer is incorrect
+Respond with EXACTLY ONE of the following JSON objects and NOTHING ELSE (no code fences, no explanations):
+{"verdict": 1}
+{"verdict": 0}
+
+Where the value of "verdict" must be the integer 1 if the model's answer is correct, or the integer 0 if it is incorrect.
 """
                 return prompt
 
@@ -305,7 +307,21 @@ Respond with a JSON containing:
                         if "```json" in response:
                             response = response.split("```json")[1].split("```")[0]
                         result = json.loads(response)
-                        return result.get("verdict", 0)
+                        verdict = result.get("verdict", 0)
+                        # Robustly coerce to 0/1 if out of range or non-integer
+                        try:
+                            verdict = int(verdict)
+                        except Exception:
+                            verdict = (
+                                1
+                                if str(verdict).strip().lower()
+                                in ["1", "true", "correct"]
+                                else 0
+                            )
+                        if verdict >= 1:
+                            return 1
+                        else:
+                            return 0
                 except:
                     # Fallback to 0 if parsing fails
                     return 0
