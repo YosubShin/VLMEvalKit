@@ -658,19 +658,34 @@ def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', judge_model
             judge_model = build_judge(**judge_kwargs)
 
     try:
-        # Evaluate each prediction column using the same judge model
+        # Check which verdicts already exist for recovery
+        existing_verdicts = []
         for i in range(k):
+            verdict_col = f'verdict_{i+1}'
+            if verdict_col in results.columns and not results[verdict_col].isna().all():
+                existing_verdicts.append(i+1)
+
+        if existing_verdicts:
+            logger.info(f"Recovery: Found existing verdicts for predictions {existing_verdicts}")
+            start_k = len(existing_verdicts) + 1
+        else:
+            start_k = 1
+
+        # Evaluate each prediction column using the same judge model
+        for i in range(start_k-1, k):
             pred_col = f'prediction_{i+1}'
             verdict_col = f'verdict_{i+1}'
 
             logger.info(f"Evaluating prediction {i+1}/{k}")
 
+            # Use unique temp file name for this k iteration
+            temp_file = osp.join(work_dir, f'temp_eval_k{i+1}_{dataset_name}.xlsx')
+
             # Create temporary dataframe for evaluation
             temp_df = df_predictions[['index', 'question', 'answer']].copy()
             temp_df['prediction'] = df_predictions[pred_col]
 
-            # Save to temporary file
-            temp_file = osp.join(work_dir, f'temp_eval_{uuid4()}.xlsx')
+            # Save to temporary file (always save for consistency)
             temp_df.to_excel(temp_file, index=False)
 
             try:
@@ -682,6 +697,7 @@ def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', judge_model
                     # Merge verdict into results
                     if 'verdict' in eval_result.columns:
                         results[verdict_col] = eval_result['verdict'].values
+                        logger.info(f"Extracted {len(eval_result)} verdicts for prediction {i+1}")
                     else:
                         if judge_kwargs.get('verbose', False):
                             logger.warning(f"No verdict column found for prediction {i+1}")
@@ -691,8 +707,21 @@ def evaluate_kfold(dataset, df_predictions, k, work_dir='./outputs', judge_model
                         logger.warning(f"Unexpected evaluation result format for prediction {i+1}")
                     results[verdict_col] = 0
 
+                # Save intermediate results after each prediction evaluation
+                intermediate_file = osp.join(work_dir, f'{dataset_name}_evaluated_partial.xlsx')
+                results.to_excel(intermediate_file, index=False)
+                logger.info(f"Saved checkpoint after evaluating prediction {i+1}")
+
+            except Exception as e:
+                logger.error(f"Error evaluating prediction {i+1}: {e}")
+                # Save what we have so far
+                intermediate_file = osp.join(work_dir, f'{dataset_name}_evaluated_partial.xlsx')
+                results.to_excel(intermediate_file, index=False)
+                logger.info(f"Saved checkpoint before failing on prediction {i+1}")
+                raise
+
             finally:
-                # Clean up temp file
+                # Clean up temp file but keep the cached result for potential recovery
                 if osp.exists(temp_file):
                     os.remove(temp_file)
 
@@ -919,6 +948,26 @@ def main():
                 logger.info("Loading existing results for evaluation")
                 kfold_results = load(inference_file)
                 df_predictions = convert_to_dataframe(kfold_results, args.k)
+
+            # Check for partial evaluation results
+            partial_eval_file = osp.join(model_work_dir, f'{dataset_name}_evaluated_partial.xlsx')
+            if osp.exists(partial_eval_file) and args.reuse:
+                logger.info(f"Loading partial evaluation results from {partial_eval_file}")
+                df_partial = pd.read_excel(partial_eval_file)
+
+                # Check which verdicts are already complete
+                completed_verdicts = []
+                for i in range(args.k):
+                    verdict_col = f'verdict_{i+1}'
+                    if verdict_col in df_partial.columns and not df_partial[verdict_col].isna().all():
+                        completed_verdicts.append(i+1)
+
+                if completed_verdicts:
+                    logger.info(f"Found partial verdicts for predictions {completed_verdicts}")
+                    # Use partial results as starting point
+                    df_predictions = df_partial
+                else:
+                    logger.info("Partial file exists but contains no verdicts, starting fresh")
 
             # Determine if we should use VLLM for judge
             use_vllm_judge = args.judge and not args.judge.startswith('gpt')
