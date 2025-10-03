@@ -213,6 +213,7 @@ def infer_kfold_batch(
     verbose=False,
     reuse=False,
     batch_size=None,
+    model_name=None,
 ):
     """
     Run k-fold inference with batch processing optimization.
@@ -285,6 +286,7 @@ def infer_kfold_batch(
             work_dir,
             verbose,
             reuse,
+            model_name=model_name,
         )
     else:
         # Fall back to regular k-fold
@@ -327,9 +329,8 @@ def _infer_kfold_batched(
 
     logger = get_logger("RUN")
     dataset_name = dataset.dataset_name
-    # Use provided model_name or derive from model
-    if model_name is None:
-        model_name = get_model_name(model)
+    # Use provided model_name directly; assume it's consistent across the run
+    assert model_name is not None, "model_name must be provided from main()"
 
     # Get rank and world size for distributed processing
     rank, world_size = get_rank_and_world_size()
@@ -1150,6 +1151,7 @@ def main():
                 verbose=args.verbose,
                 reuse=args.reuse,
                 batch_size=args.batch_size,
+                model_name=model_name,
             )
         else:
             logger.info("Inference results exist and reuse=True, skipping inference")
