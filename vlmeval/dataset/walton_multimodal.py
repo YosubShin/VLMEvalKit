@@ -58,7 +58,10 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
                 def __init__(self, llm_instance):
                     self.llm = llm_instance
                     self.sampling_params = SamplingParams(
-                        temperature=0.1, max_tokens=256, stop=["```", "\n\n"]
+                        temperature=0.1,
+                        max_tokens=256,
+                        # Remove aggressive stop tokens that can cause empty outputs
+                        stop=None,
                     )
 
                 def generate(self, prompts):
@@ -277,6 +280,14 @@ Please evaluate whether the model's answer is correct compared to the ground tru
 1. Mathematical equivalence (e.g., 58% and 58 are the same)
 2. Numerical precision (allow for minor rounding differences)
 3. Unit consistency (if units are provided)
+"""
+
+                if choices_map:
+                    prompt += """
+4. Option label/content equivalence when choices are provided (e.g., "A. 48°" and "A" are the same)
+"""
+
+                prompt += """
 
 Respond with a JSON containing:
 {"verdict": 1} if the answer is correct
