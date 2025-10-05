@@ -287,6 +287,16 @@ Please evaluate whether the model's answer is correct compared to the ground tru
 4. Option label/content equivalence when choices are provided (e.g., "A. 48°" and "A" are the same)
 """
 
+                # Deterministic normalization rules to reduce judge ambiguity
+                prompt += """
+Normalization rules:
+ - Trim whitespace and compare case-insensitively for both answers.
+ - If both answers are single-letter option labels (A/B/C/D), compare labels directly.
+ - If one is a label and the other is text, map the label to its option text and compare texts.
+ - If options are provided without labels (one per line), treat them as A, B, C... in order.
+ - If normalized Model's Answer and Ground Truth are identical, return {"verdict": 1}.
+"""
+
                 prompt += """
 
 Respond with EXACTLY ONE of the following JSON objects and NOTHING ELSE (no code fences, no explanations):
@@ -298,33 +308,111 @@ Where the value of "verdict" must be the integer 1 if the model's answer is corr
                 return prompt
 
             def parse_judge_response(response):
-                """Parse the judge's response to extract verdict"""
-                try:
-                    import json
+                """Parse the judge's response to extract verdict robustly.
 
-                    if isinstance(response, str):
-                        # Handle potential JSON extraction
-                        if "```json" in response:
-                            response = response.split("```json")[1].split("```")[0]
-                        result = json.loads(response)
-                        verdict = result.get("verdict", 0)
-                        # Robustly coerce to 0/1 if out of range or non-integer
-                        try:
-                            verdict = int(verdict)
-                        except Exception:
-                            verdict = (
-                                1
-                                if str(verdict).strip().lower()
-                                in ["1", "true", "correct"]
-                                else 0
-                            )
-                        if verdict >= 1:
-                            return 1
-                        else:
-                            return 0
-                except:
-                    # Fallback to 0 if parsing fails
+                Strategy:
+                1) Try strict JSON parse (after stripping ```json fences).
+                2) Regex extract a verdict number anywhere in the text.
+                3) Accept bare '1'/'0'.
+                4) Phrase-based fallback: 'incorrect' => 0; 'correct' => 1.
+                Default to 0.
+                """
+                import re
+                import json
+
+                if not isinstance(response, str):
                     return 0
+
+                text = response.strip()
+
+                # 1) Strip code fences and try JSON
+                try:
+                    if "```json" in text:
+                        text = text.split("```json", 1)[1].split("```", 1)[0]
+                    elif "```" in text:
+                        # Generic fence – keep inner but JSON may still parse
+                        text = text.split("```", 1)[1].split("```", 1)[0]
+                    result = json.loads(text)
+                    verdict = result.get("verdict", 0)
+                    verdict = int(verdict)
+                    return 1 if verdict >= 1 else 0
+                except Exception:
+                    pass
+
+                # 2) Regex extract {"verdict": <num>} anywhere
+                m = re.search(r'\{[^}]*"verdict"\s*:\s*([-+]?\d+(?:\.\d+)?)', response)
+                if m:
+                    try:
+                        val = float(m.group(1))
+                        return 1 if val >= 1 else 0
+                    except Exception:
+                        pass
+
+                # 3) Bare integer string
+                bare = text.strip().lower()
+                if bare in ["1", "0"]:
+                    return int(bare)
+
+                # 4) Phrase-based fallback – check 'incorrect' first to avoid substring trap
+                if re.search(r"\bincorrect\b", bare):
+                    return 0
+                if re.search(r"\bcorrect\b", bare):
+                    return 1
+
+                return 0
+
+            # Helper utilities for option parsing and answer normalization (used pre- and post-judge)
+            import re as _re
+
+            def _build_choice_map_for_qtext(qtext):
+                if not isinstance(qtext, str):
+                    return {}
+                m = _re.search(
+                    r"\n(?:Choices|Options)\s*:?[\t ]*\n", qtext, flags=_re.IGNORECASE
+                )
+                if not m:
+                    return {}
+                tail = qtext[m.end() :]
+                lines = []
+                for raw in tail.splitlines():
+                    if raw.strip() == "":
+                        break
+                    lines.append(raw)
+                # Labeled first
+                labeled_mapping = {}
+                labeled_found = False
+                for raw in lines:
+                    mm = _re.match(r"^\s*(?:[-*•]\s*)?([A-Za-z])[\.)]\s*(.+)$", raw)
+                    if mm:
+                        labeled_found = True
+                        labeled_mapping[mm.group(1).upper()] = mm.group(2).strip()
+                if labeled_found and len(labeled_mapping):
+                    return labeled_mapping
+                # Unlabeled fallback A, B, C...
+                unlabeled_mapping = {}
+                base = ord("A")
+                for i, raw in enumerate(lines):
+                    text = raw.strip()
+                    text = _re.sub(r"^\s*[-*•]\s*", "", text)
+                    unlabeled_mapping[chr(base + i)] = text
+                return unlabeled_mapping
+
+            def _normalize_answer_with_choices(ans, cmap):
+                if not isinstance(ans, str):
+                    return ans, None
+                s = ans.strip()
+                # Handle "A. some string" or "A) some string" by extracting the label and text
+                m = _re.match(r"^\s*([A-Za-z])[\.)]\s*(.+)$", s)
+                if m:
+                    label = m.group(1).upper()
+                    rest = m.group(2).strip()
+                    mapped = cmap.get(label, rest) if isinstance(cmap, dict) else rest
+                    return label, mapped
+                if len(s) == 1 and s.upper() in cmap:
+                    return s.upper(), cmap[s.upper()]
+                if len(s) == 2 and s[1] in ".)" and s[0].upper() in cmap:
+                    return s[0].upper(), cmap[s[0].upper()]
+                return s, None
 
             # Process in batches
             verdict_list = []
@@ -342,13 +430,48 @@ Where the value of "verdict" must be the integer 1 if the model's answer is corr
                     batch_end = min(i + batch_size, total_items)
                     batch_data = data.iloc[i:batch_end]
 
-                    # Create batch of prompts
-                    batch_prompts = [
-                        create_judge_prompt(
-                            row["prediction"], row["answer"], row.get("question", None)
-                        )
-                        for _, row in batch_data.iterrows()
-                    ]
+                    # Pre-judge shortcut: direct normalized match => verdict=1, skip LLM judge
+                    batch_prompts = []
+                    judge_indices = (
+                        []
+                    )  # indices (relative to batch_data) that need LLM judging
+                    pre_verdicts = [None] * len(batch_data)
+
+                    # Build prompts only for those needing judge
+                    for rel_idx, (_, row) in enumerate(batch_data.iterrows()):
+                        qtext = row.get("question", None)
+                        cmap = _build_choice_map_for_qtext(qtext)
+                        pred_ex = extract_answer(str(row.get("prediction", "")))
+                        gt_ex = extract_answer(str(row.get("answer", "")))
+                        p_label, p_text = _normalize_answer_with_choices(pred_ex, cmap)
+                        g_label, g_text = _normalize_answer_with_choices(gt_ex, cmap)
+
+                        equal = False
+                        if (
+                            isinstance(p_label, str)
+                            and isinstance(g_label, str)
+                            and len(p_label) == 1
+                            and len(g_label) == 1
+                        ):
+                            equal = p_label.upper() == g_label.upper()
+                        if not equal and p_text is not None and g_text is not None:
+                            equal = p_text.strip().lower() == g_text.strip().lower()
+                        if (
+                            not equal
+                            and isinstance(pred_ex, str)
+                            and isinstance(gt_ex, str)
+                        ):
+                            equal = pred_ex.strip().lower() == gt_ex.strip().lower()
+
+                        if equal:
+                            pre_verdicts[rel_idx] = 1
+                        else:
+                            judge_indices.append(rel_idx)
+                            batch_prompts.append(
+                                create_judge_prompt(
+                                    row["prediction"], row["answer"], qtext
+                                )
+                            )
 
                     # Log the entire first batch with colocated prompt/response pairs
 
@@ -375,25 +498,163 @@ Where the value of "verdict" must be the integer 1 if the model's answer is corr
                             print(f"Error in batch generation: {e}")
                             batch_responses = [""] * len(batch_prompts)
 
-                    if not logged_sample and len(batch_responses) > 0:
+                    if not logged_sample and (
+                        len(batch_responses) > 0
+                        or any(v == 1 for v in pre_verdicts if v is not None)
+                    ):
                         try:
                             logger.info(
                                 "=== First batch judge prompt/response pairs ==="
                             )
+                            # Log pre-judged items
+                            for rel_idx, v in enumerate(pre_verdicts):
+                                if v == 1:
+                                    logger.info(
+                                        f"--- Item {rel_idx} ---\nSkipped LLM judge due to direct normalized match => verdict: 1"
+                                    )
+                            # Log judged items
                             for j, (p, r) in enumerate(
                                 zip(batch_prompts, batch_responses)
                             ):
                                 logger.info(
-                                    f"--- Item {j} ---\nPrompt:\n{p}\n\nResponse:\n{str(r)}"
+                                    f"--- Judged Item (rel {judge_indices[j]}) ---\nPrompt:\n{p}\n\nResponse:\n{str(r)}"
                                 )
                         except Exception:
                             pass
                         logged_sample = True
 
                     # Parse responses
-                    batch_verdicts = [
+                    # Parse responses for judged subset
+                    judged_verdicts = [
                         parse_judge_response(resp) for resp in batch_responses
                     ]
+
+                    # Merge pre-judged and judged verdicts into original batch order
+                    batch_verdicts = [0] * len(batch_data)
+                    # Fill pre-judged = 1
+                    for rel_idx, v in enumerate(pre_verdicts):
+                        if v is not None:
+                            batch_verdicts[rel_idx] = v
+                    # Fill judged results
+                    for k, rel_idx in enumerate(judge_indices):
+                        batch_verdicts[rel_idx] = judged_verdicts[k]
+
+                    # Post-judge safeguard: if normalized answers match, force verdict=1
+                    try:
+                        import re
+
+                        def build_choice_map(qtext):
+                            if not isinstance(qtext, str):
+                                return {}
+                            # Find the start of choices/options block
+                            m = re.search(
+                                r"\n(?:Choices|Options)\s*:?[\t ]*\n",
+                                qtext,
+                                flags=re.IGNORECASE,
+                            )
+                            if not m:
+                                return {}
+                            tail = qtext[m.end() :]
+                            lines = []
+                            for raw in tail.splitlines():
+                                if raw.strip() == "":
+                                    break
+                                lines.append(raw)
+
+                            # Try labeled pattern first (allow bullets before labels)
+                            labeled_mapping = {}
+                            labeled_found = False
+                            for raw in lines:
+                                mm = re.match(
+                                    r"^\s*(?:[-*•]\s*)?([A-Za-z])[\.)]\s*(.+)$", raw
+                                )
+                                if mm:
+                                    labeled_found = True
+                                    labeled_mapping[mm.group(1).upper()] = mm.group(
+                                        2
+                                    ).strip()
+
+                            if labeled_found and len(labeled_mapping):
+                                return labeled_mapping
+
+                            # Fallback: unlabeled lines – assign A, B, C ... in order
+                            unlabeled_mapping = {}
+                            base = ord("A")
+                            for i, raw in enumerate(lines):
+                                text = raw.strip()
+                                # Remove common bullet markers
+                                text = re.sub(r"^\s*[-*•]\s*", "", text)
+                                unlabeled_mapping[chr(base + i)] = text
+                            return unlabeled_mapping
+
+                        def normalize_answer(ans, cmap):
+                            if not isinstance(ans, str):
+                                return ans, None
+                            s = ans.strip()
+                            # Handle "A. some string" or "A) some string"
+                            mm = re.match(r"^\s*([A-Za-z])[\.)]\s*(.+)$", s)
+                            if mm:
+                                label = mm.group(1).upper()
+                                rest = mm.group(2).strip()
+                                mapped = (
+                                    cmap.get(label, rest)
+                                    if isinstance(cmap, dict)
+                                    else rest
+                                )
+                                return label, mapped
+                            # If single letter option
+                            if len(s) == 1 and s.upper() in cmap:
+                                return s.upper(), cmap[s.upper()]
+                            # If label with trailing dot like 'A.'
+                            if len(s) == 2 and s[1] in ".[)" and s[0].upper() in cmap:
+                                return s[0].upper(), cmap[s[0].upper()]
+                            return s, None
+
+                        corrected = False
+                        for j, ((idx, row), resp) in enumerate(
+                            zip(batch_data.iterrows(), batch_responses)
+                        ):
+                            cmap = build_choice_map(row.get("question", None))
+                            pred_ex = extract_answer(str(row.get("prediction", "")))
+                            gt_ex = extract_answer(str(row.get("answer", "")))
+                            p_label, p_text = normalize_answer(pred_ex, cmap)
+                            g_label, g_text = normalize_answer(gt_ex, cmap)
+
+                            equal = False
+                            # Compare by label if both labels
+                            if (
+                                isinstance(p_label, str)
+                                and isinstance(g_label, str)
+                                and len(p_label) == 1
+                                and len(g_label) == 1
+                            ):
+                                equal = p_label.upper() == g_label.upper()
+                            # Else compare mapped texts if available
+                            if not equal and p_text is not None and g_text is not None:
+                                equal = p_text.strip().lower() == g_text.strip().lower()
+                            # Fallback: direct string compare
+                            if (
+                                not equal
+                                and isinstance(pred_ex, str)
+                                and isinstance(gt_ex, str)
+                            ):
+                                equal = pred_ex.strip().lower() == gt_ex.strip().lower()
+
+                            if equal and int(batch_verdicts[j]) == 0:
+                                batch_verdicts[j] = 1
+                                corrected = True
+                                try:
+                                    logger.warning(
+                                        f"Judge corrected to 1 due to normalized equality (row={idx}).\nPrompt:\n{batch_prompts[j]}\nResponse:\n{resp}"
+                                    )
+                                except Exception:
+                                    pass
+                        if corrected:
+                            logger.info(
+                                "Applied post-judge equality correction for one or more items in batch."
+                            )
+                    except Exception:
+                        pass
                     verdict_list.extend(batch_verdicts)
 
                     # Update progress
