@@ -1115,7 +1115,33 @@ def main():
             model_work_dir, f"{model_name}_{dataset_name}_k{args.k}_predictions.xlsx"
         )
 
-        need_inference = not (osp.exists(inference_file) and args.reuse)
+        # Only skip inference if existing results are COMPLETE (mirror _infer_kfold_batched)
+        if args.reuse and osp.exists(inference_file):
+            try:
+                existing_results = load(inference_file)
+                data = dataset.data
+                all_complete = all(
+                    existing_results.get(row["index"], {}).get("predictions", None)
+                    is not None
+                    and len(
+                        existing_results.get(row["index"], {}).get("predictions", [])
+                    )
+                    == args.k
+                    for _, row in data.iterrows()
+                )
+                need_inference = not all_complete
+                if not need_inference:
+                    logger.info(
+                        "All inference results are complete, will reuse without rerun"
+                    )
+            except Exception:
+                # If loading/checking fails, fall back to running inference
+                need_inference = True
+        else:
+            # No reusable file or reuse=False -> run inference
+            need_inference = True
+
+        # Evaluation only skipped when the final evaluated file exists and reuse=True
         need_evaluation = args.judge and (
             not osp.exists(
                 predictions_file.replace("_predictions.xlsx", "_evaluated.xlsx")
