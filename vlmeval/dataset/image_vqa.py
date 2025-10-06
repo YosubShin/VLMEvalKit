@@ -630,12 +630,10 @@ class Physics_yale(ImageBaseDataset):
 class OlympiadBench(ImageBaseDataset):
     TYPE = 'VQA_ex_prompt'
     DATASET_URL = {
-        'OlympiadBench':
-        'https://opencompass.openxlab.space/utils/VLMEval/OlympiadBench.tsv',
-        'OlympiadBench_EN':
-        'https://opencompass.openxlab.space/utils/VLMEval/OlympiadBench_EN.tsv',
-        'OlympiadBench_CN':
-        'https://opencompass.openxlab.space/utils/VLMEval/OlympiadBench_CN.tsv'
+        "OlympiadBench": "https://opencompass.openxlab.space/utils/VLMEval/OlympiadBench.tsv",
+        "OlympiadBench_EN": "https://opencompass.openxlab.space/utils/VLMEval/OlympiadBench_EN.tsv",
+        "OlympiadBench_CN": "https://opencompass.openxlab.space/utils/VLMEval/OlympiadBench_CN.tsv",
+        "OlympiadBench-1k": "https://huggingface.co/datasets/yosubshin/OlympiadBench-1k/resolve/main/OlympiadBench_1k.tsv",
     }
     DATASET_MD5 = {
         'OlympiadBench': '9735ae0f0299eae1e7d07f5a7feab914',
