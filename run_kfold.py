@@ -137,6 +137,11 @@ Usage:
     # Logging Utils
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--no-warning", action="store_true", help="Disable warnings")
+    parser.add_argument(
+        "--skip-image",
+        action="store_true",
+        help="Remove 'image' column from each row before building prompts",
+    )
 
     # K-fold specific arguments
     parser.add_argument(
@@ -214,6 +219,7 @@ def infer_kfold_batch(
     reuse=False,
     batch_size=None,
     model_name=None,
+    skip_image=False,
 ):
     """
     Run k-fold inference with batch processing optimization.
@@ -287,6 +293,7 @@ def infer_kfold_batch(
             verbose,
             reuse,
             model_name=model_name,
+            skip_image=skip_image,
         )
     else:
         # Fall back to regular k-fold
@@ -320,6 +327,7 @@ def _infer_kfold_batched(
     verbose,
     reuse,
     model_name=None,
+    skip_image=False,
 ):
     """
     Internal function for batched k-fold inference using existing batch processing infrastructure.
@@ -340,6 +348,8 @@ def _infer_kfold_batched(
     )
     logger.info(f"Model: {model_name}, Dataset: {dataset_name}")
     logger.info(f"Temperature: {temperature}, Top-p: {top_p}")
+    if skip_image:
+        logger.info("skip-image enabled: dropping 'image' column before prompt build")
     logger.info(f"Processing up to {prompts_per_batch} prompts per batch")
     if world_size > 1:
         logger.info(f"Distributed inference: Rank {rank}/{world_size}")
@@ -455,12 +465,17 @@ def _infer_kfold_batched(
             }
 
         # Build prompt once for this item
+        row_for_prompt = row.copy() if skip_image else row
+        if skip_image and ("image" in getattr(row_for_prompt, "index", [])):
+            # Remove the image column for ablation
+            del row_for_prompt["image"]
+
         if hasattr(model, "use_custom_prompt") and model.use_custom_prompt(
             dataset_name
         ):
-            prompt_struct = model.build_prompt(row, dataset=dataset_name)
+            prompt_struct = model.build_prompt(row_for_prompt, dataset=dataset_name)
         else:
-            prompt_struct = dataset.build_prompt(row)
+            prompt_struct = dataset.build_prompt(row_for_prompt)
 
         # Add a single generation request per prompt (VLLM can return n candidates)
         existing_preds = len(results[index]["predictions"])
@@ -1178,6 +1193,7 @@ def main():
                 reuse=args.reuse,
                 batch_size=args.batch_size,
                 model_name=model_name,
+                skip_image=args.skip_image,
             )
         else:
             logger.info("Inference results exist and reuse=True, skipping inference")
