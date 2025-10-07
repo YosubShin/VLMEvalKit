@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Filter TSV file by token count in the answer column.
+Filter TSV file by token counts in the question and answer columns.
 
 Usage:
-    python filter_tsv_by_token_count.py input.tsv output.tsv --min-tokens 200 --max-tokens 13500
-    python filter_tsv_by_token_count.py input.tsv output.tsv  # Uses default min=200, max=13500
+    python filter_tsv_by_token_count.py input.tsv output.tsv \
+        --max-question-tokens 4096 --max-answer-tokens 13500 \
+        [--min-question-tokens N] [--min-answer-tokens M]
 """
 
 import sys
+import os
 import pandas as pd
 import argparse
 import numpy as np
@@ -26,8 +28,8 @@ def count_tokens(text, tokenizer):
         return int(len(str(text).split()) * 1.3)
 
 
-def plot_token_histogram(token_counts, output_path, min_tokens, max_tokens):
-    """Plot histogram of token counts."""
+def plot_token_histogram(token_counts, output_path, min_tokens, max_tokens, title, file_suffix):
+    """Plot histogram of token counts for a column."""
     plt.figure(figsize=(12, 6))
 
     # Filter out zeros for better visualization
@@ -38,20 +40,24 @@ def plot_token_histogram(token_counts, output_path, min_tokens, max_tokens):
     n, bins, patches = plt.hist(non_zero_counts, bins=50, edgecolor='black', alpha=0.7)
 
     # Add vertical lines for min/max thresholds
-    plt.axvline(min_tokens, color='red', linestyle='--', label=f'Min: {min_tokens}')
-    plt.axvline(max_tokens, color='red', linestyle='--', label=f'Max: {max_tokens}')
+    if min_tokens is not None:
+        plt.axvline(min_tokens, color='red', linestyle='--', label=f'Min: {min_tokens}')
+    if max_tokens is not None:
+        plt.axvline(max_tokens, color='red', linestyle='--', label=f'Max: {max_tokens}')
 
     plt.xlabel('Number of Tokens')
     plt.ylabel('Frequency')
-    plt.title('Distribution of Token Counts in Answer Column')
+    plt.title(f'Distribution of Token Counts in {title}')
     plt.legend()
     plt.grid(True, alpha=0.3)
 
     # Log scale version
     plt.subplot(1, 2, 2)
     plt.hist(non_zero_counts, bins=50, edgecolor='black', alpha=0.7)
-    plt.axvline(min_tokens, color='red', linestyle='--', label=f'Min: {min_tokens}')
-    plt.axvline(max_tokens, color='red', linestyle='--', label=f'Max: {max_tokens}')
+    if min_tokens is not None:
+        plt.axvline(min_tokens, color='red', linestyle='--', label=f'Min: {min_tokens}')
+    if max_tokens is not None:
+        plt.axvline(max_tokens, color='red', linestyle='--', label=f'Max: {max_tokens}')
 
     plt.xlabel('Number of Tokens')
     plt.ylabel('Frequency (log scale)')
@@ -63,7 +69,8 @@ def plot_token_histogram(token_counts, output_path, min_tokens, max_tokens):
     plt.tight_layout()
 
     # Save figure
-    histogram_path = output_path.replace('.tsv', '_token_histogram.png')
+    root, ext = os.path.splitext(output_path)
+    histogram_path = f"{root}_{file_suffix}_token_histogram.png"
     plt.savefig(histogram_path, dpi=100, bbox_inches='tight')
     print(f"Histogram saved to {histogram_path}")
 
@@ -74,15 +81,23 @@ def plot_token_histogram(token_counts, output_path, min_tokens, max_tokens):
         pass
 
 
-def filter_tsv_by_tokens(tsv_path, output_path, min_tokens=200, max_tokens=13500, model="Qwen/Qwen2.5-VL-7B-Instruct"):
+def filter_tsv_by_tokens(tsv_path,
+                         output_path,
+                         min_question_tokens=None,
+                         max_question_tokens=None,
+                         min_answer_tokens=None,
+                         max_answer_tokens=None,
+                         model="Qwen/Qwen2.5-VL-7B-Instruct"):
     """
-    Filter TSV rows based on token count in answer column.
+    Filter TSV rows based on token counts in question and answer columns.
 
     Args:
         tsv_path: Path to input TSV file
         output_path: Path to output filtered TSV file
-        min_tokens: Minimum number of tokens required
-        max_tokens: Maximum number of tokens allowed
+        min_question_tokens: Optional minimum tokens for question (no lower bound if None)
+        max_question_tokens: Required maximum tokens for question
+        min_answer_tokens: Optional minimum tokens for answer (no lower bound if None)
+        max_answer_tokens: Required maximum tokens for answer
         model: Model to use for tokenization (default: Qwen/Qwen2.5-VL-7B-Instruct)
     """
     # Initialize tokenizer
@@ -99,104 +114,133 @@ def filter_tsv_by_tokens(tsv_path, output_path, min_tokens=200, max_tokens=13500
     df = pd.read_csv(tsv_path, sep='\t')
     print(f"Total rows: {len(df)}")
 
-    # Check if answer column exists
+    # Check if required columns exist
+    if 'question' not in df.columns:
+        print("Error: 'question' column not found in TSV file")
+        print(f"Available columns: {list(df.columns)}")
+        sys.exit(1)
     if 'answer' not in df.columns:
         print("Error: 'answer' column not found in TSV file")
         print(f"Available columns: {list(df.columns)}")
         sys.exit(1)
 
-    # Count tokens for each answer
-    print("Counting tokens in answers...")
-    df['token_count'] = df['answer'].apply(lambda x: count_tokens(x, tokenizer))
+    # Count tokens for question and answer
+    print("Counting tokens in questions and answers...")
+    df['question_token_count'] = df['question'].apply(lambda x: count_tokens(x, tokenizer))
+    df['answer_token_count'] = df['answer'].apply(lambda x: count_tokens(x, tokenizer))
 
     # Calculate statistics before filtering
-    token_counts = df['token_count'].values
+    q_counts = df['question_token_count'].values
+    a_counts = df['answer_token_count'].values
 
-    print("\n=== Token Count Statistics (Before Filtering) ===")
-    print(f"Total answers: {len(token_counts)}")
-    print(f"Mean tokens: {np.mean(token_counts):.1f}")
-    print(f"Median tokens: {np.median(token_counts):.1f}")
-    print(f"Std dev: {np.std(token_counts):.1f}")
-    print(f"Min tokens: {np.min(token_counts)}")
-    print(f"Max tokens: {np.max(token_counts)}")
+    print("\n=== Question Token Count Statistics (Before Filtering) ===")
+    print(f"Total questions: {len(q_counts)}")
+    print(f"Mean tokens: {np.mean(q_counts):.1f}")
+    print(f"Median tokens: {np.median(q_counts):.1f}")
+    print(f"Std dev: {np.std(q_counts):.1f}")
+    print(f"Min tokens: {np.min(q_counts)}")
+    print(f"Max tokens: {np.max(q_counts)}")
 
-    # Distribution percentiles
+    print("\n=== Answer Token Count Statistics (Before Filtering) ===")
+    print(f"Total answers: {len(a_counts)}")
+    print(f"Mean tokens: {np.mean(a_counts):.1f}")
+    print(f"Median tokens: {np.median(a_counts):.1f}")
+    print(f"Std dev: {np.std(a_counts):.1f}")
+    print(f"Min tokens: {np.min(a_counts)}")
+    print(f"Max tokens: {np.max(a_counts)}")
+
+    # Distribution percentiles for answers (kept for continuity)
     percentiles = [1, 5, 10, 25, 50, 75, 90, 95, 99]
-    print("\nPercentiles:")
+    print("\nAnswer Percentiles:")
     for p in percentiles:
-        val = np.percentile(token_counts, p)
+        val = np.percentile(a_counts, p)
         print(f"  {p:3d}%: {val:8.0f} tokens")
 
-    # Count how many fall in different ranges
-    print("\nToken count ranges:")
-    ranges = [(0, 100), (100, 200), (200, 500), (500, 1000),
-              (1000, 5000), (5000, 10000), (10000, 13500), (13500, 20000), (20000, float('inf'))]
+    # Filter based on token counts (apply optional mins and required maxes)
+    print("\nFiltering rows based on token thresholds...")
+    mask = np.ones(len(df), dtype=bool)
 
-    for low, high in ranges:
-        count = np.sum((token_counts >= low) & (token_counts < high))
-        pct = count / len(token_counts) * 100
-        if high == float('inf'):
-            print(f"  {low:5d}+     : {count:6d} ({pct:5.1f}%)")
-        else:
-            print(f"  {low:5d}-{high:<5d}: {count:6d} ({pct:5.1f}%)")
+    # Question constraints
+    if min_question_tokens is not None:
+        mask &= df['question_token_count'] >= min_question_tokens
+    mask &= df['question_token_count'] <= max_question_tokens
 
-    # Filter based on token count
-    print(f"\nFiltering answers with {min_tokens} <= tokens <= {max_tokens}...")
-    filtered_df = df[(df['token_count'] >= min_tokens) & (df['token_count'] <= max_tokens)].copy()
+    # Answer constraints
+    if min_answer_tokens is not None:
+        mask &= df['answer_token_count'] >= min_answer_tokens
+    mask &= df['answer_token_count'] <= max_answer_tokens
 
-    # Remove the temporary token_count column before saving
-    filtered_df = filtered_df.drop('token_count', axis=1)
+    filtered_df = df[mask].copy()
 
     print(f"Rows after filtering: {len(filtered_df)}")
     print(f"Rows removed: {len(df) - len(filtered_df)}")
     print(f"Retention rate: {len(filtered_df)/len(df)*100:.1f}%")
 
     # Calculate statistics after filtering
-    filtered_token_counts = df[(df['token_count'] >= min_tokens) & (df['token_count'] <= max_tokens)]['token_count'].values
+    if len(filtered_df) > 0:
+        fq = filtered_df['question_token_count'].values
+        fa = filtered_df['answer_token_count'].values
+        print("\n=== Question Token Count Statistics (After Filtering) ===")
+        print(f"Total questions: {len(fq)}")
+        print(f"Mean tokens: {np.mean(fq):.1f}")
+        print(f"Median tokens: {np.median(fq):.1f}")
+        print(f"Std dev: {np.std(fq):.1f}")
+        print(f"Min tokens: {np.min(fq)}")
+        print(f"Max tokens: {np.max(fq)}")
 
-    if len(filtered_token_counts) > 0:
-        print("\n=== Token Count Statistics (After Filtering) ===")
-        print(f"Total answers: {len(filtered_token_counts)}")
-        print(f"Mean tokens: {np.mean(filtered_token_counts):.1f}")
-        print(f"Median tokens: {np.median(filtered_token_counts):.1f}")
-        print(f"Std dev: {np.std(filtered_token_counts):.1f}")
-        print(f"Min tokens: {np.min(filtered_token_counts)}")
-        print(f"Max tokens: {np.max(filtered_token_counts)}")
+        print("\n=== Answer Token Count Statistics (After Filtering) ===")
+        print(f"Total answers: {len(fa)}")
+        print(f"Mean tokens: {np.mean(fa):.1f}")
+        print(f"Median tokens: {np.median(fa):.1f}")
+        print(f"Std dev: {np.std(fa):.1f}")
+        print(f"Min tokens: {np.min(fa)}")
+        print(f"Max tokens: {np.max(fa)}")
+
+    # Remove the temporary token_count columns before saving
+    filtered_df = filtered_df.drop(['question_token_count', 'answer_token_count'], axis=1)
 
     # Save filtered TSV
     print(f"\nSaving filtered TSV to {output_path}...")
     filtered_df.to_csv(output_path, sep='\t', index=False)
     print(f"Successfully saved {len(filtered_df)} rows to {output_path}")
 
-    # Plot histogram
-    plot_token_histogram(token_counts, output_path, min_tokens, max_tokens)
+    # Plot histograms for both columns
+    plot_token_histogram(q_counts, output_path, min_question_tokens, max_question_tokens, 'Question Column', 'question')
+    plot_token_histogram(a_counts, output_path, min_answer_tokens, max_answer_tokens, 'Answer Column', 'answer')
 
-    # Show which indices were filtered out
+    # Show which indices were filtered out (with reasons)
     if 'index' in df.columns:
-        removed_df = df[(df['token_count'] < min_tokens) | (df['token_count'] > max_tokens)]
+        removed_df = df[~mask]
         if len(removed_df) > 0:
             print("\nSample of removed entries (first 10):")
             for idx, row in removed_df.head(10).iterrows():
-                print(f"  Index {row['index']}: {row['token_count']} tokens")
-                if row['token_count'] < min_tokens:
-                    print(f"    (below minimum of {min_tokens})")
-                else:
-                    print(f"    (above maximum of {max_tokens})")
+                reasons = []
+                qt = row['question_token_count']
+                at = row['answer_token_count']
+                if min_question_tokens is not None and qt < min_question_tokens:
+                    reasons.append(f"question below min ({qt} < {min_question_tokens})")
+                if qt > max_question_tokens:
+                    reasons.append(f"question above max ({qt} > {max_question_tokens})")
+                if min_answer_tokens is not None and at < min_answer_tokens:
+                    reasons.append(f"answer below min ({at} < {min_answer_tokens})")
+                if at > max_answer_tokens:
+                    reasons.append(f"answer above max ({at} > {max_answer_tokens})")
+                reason_str = '; '.join(reasons) if reasons else 'threshold mismatch'
+                print(f"  Index {row['index']}: Q={qt} tokens, A={at} tokens -> {reason_str}")
 
     return filtered_df
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Filter TSV file by token count in answer column',
+        description='Filter TSV file by token counts in question and answer columns',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Filter with custom thresholds
-  python filter_tsv_by_token_count.py input.tsv output.tsv --min-tokens 200 --max-tokens 13500
-
-  # Use default thresholds (200-13500)
-  python filter_tsv_by_token_count.py input.tsv output.tsv
+  python filter_tsv_by_token_count.py input.tsv output.tsv \
+      --max-question-tokens 4096 --max-answer-tokens 13500 \
+      --min-question-tokens 50 --min-answer-tokens 200
 
   # Use different tokenizer model
   python filter_tsv_by_token_count.py input.tsv output.tsv --model Qwen/Qwen2.5-7B-Instruct
@@ -205,30 +249,57 @@ Examples:
 
     parser.add_argument('input_file', help='Path to input TSV file')
     parser.add_argument('output_file', help='Path to output filtered TSV file')
-    parser.add_argument('--min-tokens', type=int, default=200,
-                       help='Minimum number of tokens in answer (default: 200)')
-    parser.add_argument('--max-tokens', type=int, default=13500,
-                       help='Maximum number of tokens in answer (default: 13500)')
+    # Arguments
+    parser.add_argument('--min-question-tokens', type=int, default=None,
+                       help='Optional minimum number of tokens in question (no lower bound if omitted)')
+    parser.add_argument('--max-question-tokens', type=int, default=None,
+                       help='Required maximum number of tokens in question')
+    parser.add_argument('--min-answer-tokens', type=int, default=None,
+                       help='Optional minimum number of tokens in answer (no lower bound if omitted)')
+    parser.add_argument('--max-answer-tokens', type=int, default=None,
+                       help='Required maximum number of tokens in answer')
     parser.add_argument('--model', default='Qwen/Qwen2.5-VL-7B-Instruct',
                        help='Model to use for tokenization (default: Qwen/Qwen2.5-VL-7B-Instruct)')
 
     args = parser.parse_args()
 
     # Validate arguments
-    if args.min_tokens < 0:
-        print("Error: min-tokens must be non-negative")
+    if args.max_question_tokens is None:
+        print("Error: --max-question-tokens is required")
+        sys.exit(1)
+    if args.max_answer_tokens is None:
+        print("Error: --max-answer-tokens is required")
         sys.exit(1)
 
-    if args.max_tokens < args.min_tokens:
-        print("Error: max-tokens must be greater than or equal to min-tokens")
+    if args.min_question_tokens is not None and args.min_question_tokens < 0:
+        print("Error: min-question-tokens must be non-negative")
+        sys.exit(1)
+    if args.min_answer_tokens is not None and args.min_answer_tokens < 0:
+        print("Error: min-answer-tokens must be non-negative")
+        sys.exit(1)
+
+    if args.max_question_tokens <= 0:
+        print("Error: max-question-tokens must be positive")
+        sys.exit(1)
+    if args.max_answer_tokens <= 0:
+        print("Error: max-answer-tokens must be positive")
+        sys.exit(1)
+
+    if args.min_question_tokens is not None and args.min_question_tokens > args.max_question_tokens:
+        print("Error: max-question-tokens must be greater than or equal to min-question-tokens")
+        sys.exit(1)
+    if args.min_answer_tokens is not None and args.min_answer_tokens > args.max_answer_tokens:
+        print("Error: max-answer-tokens must be greater than or equal to min-answer-tokens")
         sys.exit(1)
 
     try:
         filter_tsv_by_tokens(
             args.input_file,
             args.output_file,
-            min_tokens=args.min_tokens,
-            max_tokens=args.max_tokens,
+            min_question_tokens=args.min_question_tokens,
+            max_question_tokens=args.max_question_tokens,
+            min_answer_tokens=args.min_answer_tokens,
+            max_answer_tokens=args.max_answer_tokens,
             model=args.model
         )
     except Exception as e:
