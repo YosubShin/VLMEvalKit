@@ -5,6 +5,7 @@ Resize images in TSV file to maximum width while preserving aspect ratio.
 Usage:
     python resize_images_in_tsv.py input.tsv output.tsv --max-width 768
     python resize_images_in_tsv.py input.tsv output.tsv --max-width 768 --max-height 1024
+    python resize_images_in_tsv.py input.tsv output.tsv --min-longest-side 100
 """
 
 import sys
@@ -209,7 +210,8 @@ def plot_size_histogram(original_sizes, resized_sizes, output_path):
 
 
 def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
-                        format='PNG', quality=95, show_histogram=True, skip_empty=False):
+                        format='PNG', quality=95, show_histogram=True, skip_empty=False,
+                        min_longest_side=None):
     """
     Resize images in TSV file to maximum dimensions.
 
@@ -222,6 +224,7 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
         quality: JPEG quality (1-100)
         show_histogram: Whether to generate size distribution histogram
         skip_empty: Whether to skip empty/blank images
+        min_longest_side: If set, drop images whose longest side is below this size
     """
     # Read the input TSV
     print(f"Reading TSV from {tsv_path}...")
@@ -238,6 +241,8 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
     print(f"\nProcessing images (max width: {max_width}px, max height: {max_height or 'unlimited'}px)...")
     if skip_empty:
         print("Empty/blank image detection is enabled")
+    if min_longest_side is not None:
+        print(f"Minimum longest side: {min_longest_side}px (images below are skipped)")
 
     original_sizes = []
     resized_sizes = []
@@ -246,7 +251,9 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
     resize_count = 0
     error_count = 0
     empty_count = 0
+    small_image_count = 0
     rows_to_keep = []
+    should_filter_rows = bool(skip_empty or (min_longest_side is not None))
 
     # Process each row with progress bar
     for idx in tqdm(range(len(df)), desc="Processing images"):
@@ -262,6 +269,16 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
                 img = PILImage.open(BytesIO(original_bytes_data))
                 original_size = img.size
                 original_sizes.append(original_size)
+
+                # Drop if image is below minimum longest side requirement
+                if min_longest_side is not None:
+                    width, height = img.size
+                    if max(width, height) < min_longest_side:
+                        small_image_count += 1
+                        # Skip this row - don't add to rows_to_keep
+                        resized_sizes.append((0, 0))
+                        resized_bytes.append(0)
+                        continue
 
                 # Check if image is empty
                 if skip_empty and is_empty_image(img):
@@ -290,16 +307,16 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
             except Exception as e:
                 print(f"\nError processing image at index {row.get('index', idx)}: {e}")
                 error_count += 1
-                # Keep original on error (unless skip_empty is true)
-                if not skip_empty:
+                # Keep original on error (unless we are filtering any rows)
+                if not should_filter_rows:
                     rows_to_keep.append(idx)
                 original_sizes.append((0, 0))
                 resized_sizes.append((0, 0))
                 original_bytes.append(0)
                 resized_bytes.append(0)
         else:
-            # No image data - skip if skip_empty is true
-            if skip_empty:
+            # No image data - skip if we are filtering rows
+            if should_filter_rows:
                 empty_count += 1
             else:
                 rows_to_keep.append(idx)
@@ -308,8 +325,8 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
             original_bytes.append(0)
             resized_bytes.append(0)
 
-    # Filter dataframe to only keep non-empty images if skip_empty is enabled
-    if skip_empty:
+    # Filter dataframe to only keep desired rows if filtering is enabled
+    if should_filter_rows:
         df_output = df.iloc[rows_to_keep].reset_index(drop=True)
     else:
         df_output = df.copy()
@@ -333,6 +350,8 @@ def resize_images_in_tsv(tsv_path, output_path, max_width=768, max_height=None,
         print(f"Images resized: {resize_count} ({resize_count/len(valid_originals)*100:.1f}%)")
         if skip_empty:
             print(f"Empty/blank images removed: {empty_count}")
+        if min_longest_side is not None:
+            print(f"Images removed for small size (< {min_longest_side}px longest side): {small_image_count}")
         print(f"Processing errors: {error_count}")
 
         print(f"\nOriginal dimensions:")
@@ -408,6 +427,9 @@ Examples:
 
   # Remove empty/blank images from dataset
   python resize_images_in_tsv.py input.tsv output.tsv --skip-empty
+
+  # Drop images with longest side smaller than 100px
+  python resize_images_in_tsv.py input.tsv output.tsv --min-longest-side 100
         """
     )
 
@@ -425,6 +447,8 @@ Examples:
                        help='Skip generating size distribution histogram')
     parser.add_argument('--skip-empty', action='store_true',
                        help='Remove empty/blank images (white backgrounds)')
+    parser.add_argument('--min-longest-side', type=int, default=None,
+                       help='Minimum required longest side in pixels; images below are dropped')
 
     args = parser.parse_args()
 
@@ -435,6 +459,10 @@ Examples:
 
     if args.max_height is not None and args.max_height <= 0:
         print("Error: max-height must be positive")
+        sys.exit(1)
+
+    if args.min_longest_side is not None and args.min_longest_side <= 0:
+        print("Error: min-longest-side must be positive")
         sys.exit(1)
 
     if args.quality < 1 or args.quality > 100:
@@ -450,7 +478,8 @@ Examples:
             format=args.format,
             quality=args.quality,
             show_histogram=not args.no_histogram,
-            skip_empty=args.skip_empty
+            skip_empty=args.skip_empty,
+            min_longest_side=args.min_longest_side
         )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
