@@ -93,12 +93,14 @@ def extract_question_answer(item: Dict[str, Any]) -> Tuple[Optional[str], Option
     question: Optional[str] = None
     answer: Optional[str] = None
 
-    # Find first human message (retain as-is, including <image> tokens if present)
+    # Find first human message: retain from first "<image>" (inclusive); if not found, retain as-is
     for turn in conversations:
         if isinstance(turn, dict) and turn.get("from") == "human":
             value = turn.get("value", "")
             if isinstance(value, str):
-                question = value.strip()
+                s = value.strip()
+                pos = s.find("<image>")
+                question = s[pos:].strip() if pos != -1 else s
             break
 
     # Find first assistant message (retain full content; do not extract only <answer>)
