@@ -2,7 +2,7 @@
 #SBATCH --job-name=VLMEvalKit
 #SBATCH --partition=kill-shared
 #SBATCH --time=01:00:00
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --gres=gpu:nvidia_h100_pcie:1
 
@@ -62,7 +62,8 @@ srun uv run run.py \
 --data Omni3DBench \
 --work-dir ${RESULTS_DIR} \
 --use-vllm \
---max-output-tokens 2048 \
---batch-size 2 \
---api-nproc 2 \
+--max-output-tokens 4096 \
+--batch-size 8 \
+--api-nproc 8 \
+--reuse \
 --judge gpt-4o-mini

@@ -427,6 +427,7 @@ def is_model_vllm_compatible(model_name: str) -> bool:
         'Llama-4' in model_name
         or 'Qwen2-VL' in model_name
         or 'Qwen2.5-VL' in model_name
+        or 'Qwen3-VL' in model_name
         or 'molmo' in model_name.lower()
     )
 
