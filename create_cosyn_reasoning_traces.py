@@ -28,7 +28,8 @@ from vlmeval.api.gpt import OpenAIWrapper
 
 
 DEFAULT_INSTRUCTION = (
-    "Please reason step by step, and put your final answer within \\boxed{}."
+    "Rewrite a clear, step-by-step reasoning trace. Ensure the final answer is"
+    " EXACTLY the given ground-truth answer. Put the final answer within \\boxed{...}."
 )
 
 
@@ -60,19 +61,24 @@ def _save_pil_to_tmp_path(image_pil) -> str:
     return tmp.name
 
 
-def make_messages(image_pil, problem: str, instruction: str):
+def make_messages(image_pil, problem: str, solution: str, instruction: str):
     # Interleaved: image then text prompt
     # Compatible with vlmeval BaseAPI message format
     image_path = _save_pil_to_tmp_path(image_pil)
     content = [
         {"type": "image", "value": image_path},
-        {"type": "text", "value": f"Problem: {problem}\n\nInstruction: {instruction}"},
+        {"type": "text", "value": (
+            f"Problem: {problem}\n\n"
+            f"Ground-truth final answer: {solution}\n\n"
+            f"Instruction: {instruction}\n\n"
+            f"End with the EXACT same final answer within \\boxed{{{solution}}}."
+        )},
     ]
     return content
 
 
-def generate_trace(wrapper: OpenAIWrapper, image_pil, problem: str, instruction: str) -> str:
-    content = make_messages(image_pil, problem, instruction)
+def generate_trace(wrapper: OpenAIWrapper, image_pil, problem: str, solution: str, instruction: str) -> str:
+    content = make_messages(image_pil, problem, solution, instruction)
     answer = wrapper.generate(content, max_tokens=2048)
     return answer
 
@@ -86,8 +92,9 @@ def process_split(ds, wrapper: OpenAIWrapper, instruction: str, image_col: str, 
         # Dataset image type is datasets.Image, which yields a PIL.Image on read
         image_pil = example[image_col]
         problem = example.get(problem_col, "")
+        solution = str(example.get('solution', ''))
         try:
-            trace = generate_trace(wrapper, image_pil, problem, instruction)
+            trace = generate_trace(wrapper, image_pil, problem, solution, instruction)
         except Exception as e:
             trace = f"[ERROR] {type(e).__name__}: {e}"
         example[output_col] = trace
