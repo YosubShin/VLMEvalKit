@@ -3,7 +3,7 @@ name = "VLMEvalKit"
 version = "0.1.0"
 description = "Evaluate VLMs on benchmark datasets."
 readme = "README.md"
-requires-python = "==3.10"
+requires-python = "==3.10.*"
 
 # Core dependencies shared by both Mac (CPU/MPS) and HPC (CUDA)
 dependencies = [
@@ -36,7 +36,7 @@ hpc = [
     "json_repair",
     "matplotlib",
     "nltk",
-    "numpy",
+    "numpy<2",
     "omegaconf",
     "openai",
     "opencv-python-headless>=4.4.0.46",

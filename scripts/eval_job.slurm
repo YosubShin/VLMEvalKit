@@ -3,7 +3,7 @@
 #SBATCH --partition=kill-shared
 #SBATCH --time=01:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --gres=gpu:nvidia_h100_pcie:1
 
 set -euo pipefail
@@ -52,12 +52,17 @@ echo
 
 source "scripts/setup_env.sh"
 
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_GPU_MEMORY_UTILIZATION=0.85
+
+# --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct \
+
 srun uv run run.py \
---pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct \
+--pass-custom-model /home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune/output/11k/qwen3-vl-8b-instruct/checkpoint-520 \
 --data Omni3DBench \
 --work-dir ${RESULTS_DIR} \
 --use-vllm \
---max-output-tokens 8192 \
---batch-size 32 \
---api-nproc 40 \
+--max-output-tokens 2048 \
+--batch-size 2 \
+--api-nproc 2 \
 --judge gpt-4o-mini
