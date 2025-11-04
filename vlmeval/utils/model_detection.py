@@ -83,6 +83,14 @@ def detect_model_architecture(model_path: str) -> Tuple[str, Dict[str, Any]]:
             "use_custom_prompt": False,
         }
 
+    elif any("qwen3_vl" in arch for arch in arch_lower) or model_type == "qwen3_vl":
+        return "Qwen3VLChat", {
+            "model_path": model_path,
+            "min_pixels": 1280 * 28 * 28,
+            "max_pixels": 16384 * 28 * 28,
+            "use_custom_prompt": False,
+        }
+
     elif any("qwenvl" in arch for arch in arch_lower) or model_type == "qwen_vl":
         if "chat" in model_path.lower():
             return "QwenVLChat", {"model_path": model_path}
@@ -277,7 +285,7 @@ def detect_model_architecture(model_path: str) -> Tuple[str, Dict[str, Any]]:
 
     # If no match found, raise an error with helpful information
     supported_types = [
-        "qwen2_vl", "qwen2_5_vl", "qwen_vl", "llava", "internvl", "minicpm", "phi",
+        "qwen2_vl", "qwen2_5_vl", "qwen3_vl", "qwen_vl", "llava", "internvl", "minicpm", "phi",
         "molmo", "aria", "pixtral", "smolvlm", "idefics", "cogvlm",
         "deepseek", "llama-vision", "gemma", "vila", "ovis", "bunny",
         "cambrian", "mantis", "moondream", "eagle", "vita", "sail", "flash",

@@ -201,7 +201,7 @@ run.sh
 run_g.sh
 tmp/
 InternVL*
-Qwen*
+# Qwen*
 CongRong*
 
 ## CLAUDE FILES
