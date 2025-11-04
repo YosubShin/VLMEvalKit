@@ -1,0 +1,83 @@
+[project]
+name = "VLMEvalKit"
+version = "0.1.0"
+description = "Evaluate VLMs on benchmark datasets."
+readme = "README.md"
+requires-python = "==3.10"
+
+# Core dependencies shared by both Mac (CPU/MPS) and HPC (CUDA)
+dependencies = [
+    "pandas>=2.2.0",
+    "pillow>=10.3.0",
+    "huggingface_hub>=0.23.0",
+    "transformers==4.57.1",
+    "wandb",
+    "setuptools",
+]
+
+[project.optional-dependencies]
+hpc = [
+    "peft==0.17.1",
+    "deepspeed==0.17.1",
+    "torchcodec==0.2",
+    "triton",
+    "ninja",
+    "accelerate==1.7.0",
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "torchaudio==2.6.0",
+    "flash-attn==2.7.4.post1",
+    "antlr4-python3-runtime==4.11.0",
+    "einops",
+    "google-genai",
+    "gradio",
+    "imageio",
+    "ipdb",
+    "json_repair",
+    "matplotlib",
+    "nltk",
+    "numpy",
+    "omegaconf",
+    "openai",
+    "opencv-python-headless>=4.4.0.46",
+    "openpyxl",
+    "portalocker",
+    "protobuf",
+    "python-dotenv",
+    "qwen_vl_utils",
+    "requests",
+    "rich",
+    "sentencepiece",
+    "sty",
+    "tabulate",
+    "tensorflow",
+    "tiktoken",
+    "timeout-decorator",
+    "timm",
+    "tqdm",
+    "transformers",
+    "typing_extensions",
+    "validators",
+    "vllm>=0.6.4,<=0.8.4",
+    "xlsxwriter",
+]
+
+[tool.uv]
+package = false
+no-build-isolation-package = ["flash-attn"]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu124", extra = "hpc" },
+]
+torchvision = [
+  { index = "pytorch-cu124", extra = "hpc" },
+]
+torchaudio = [
+  { index = "pytorch-cu124", extra = "hpc" },
+]
