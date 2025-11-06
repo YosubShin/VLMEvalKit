@@ -17,7 +17,7 @@ VLLM_MAX_IMAGE_INPUT_NUM = 24
 def is_moe_model(model_path: str) -> bool:
     """Check if the model is a Mixture of Experts model."""
     path_parts = model_path.split("/")
-    non_moe_patterns = ["4B", "8B"]
+    non_moe_patterns = ["4B", "8B", "4b", "8b"]
     for part in path_parts:
         if any(pattern in part for pattern in non_moe_patterns):
             return False
@@ -108,18 +108,6 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         if self.use_vllm:
             from vllm import LLM
 
-            supports_mm_tp_mode = False
-            try:
-                from inspect import signature
-                from vllm.entrypoints.llm import EngineArgs
-
-                supports_mm_tp_mode = (
-                    "mm_encoder_tp_mode"
-                    in signature(EngineArgs.__init__).parameters
-                )
-            except Exception:
-                supports_mm_tp_mode = False
-
             gpu_count = torch.cuda.device_count()
             tp_size = gpu_count if gpu_count > 0 else 1
             logging.info(
@@ -130,20 +118,17 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
                     "VLLM_WORKER_MULTIPROC_METHOD is not set to spawn. Use 'export VLLM_WORKER_MULTIPROC_METHOD=spawn'"
                 )
             enable_expert_parallel = is_moe_model(self.model_path)
-            llm_kwargs = dict(
+            self.llm = LLM(
                 model=self.model_path,
                 max_num_seqs=5,
                 max_model_len=self.max_new_tokens,
                 limit_mm_per_prompt={"image": self.limit_mm_per_prompt},
                 tensor_parallel_size=tp_size,
+                mm_encoder_tp_mode="data",
                 enable_expert_parallel=enable_expert_parallel,
                 seed=0,
                 gpu_memory_utilization=kwargs.get("gpu_utils", 0.7),
             )
-            if supports_mm_tp_mode:
-                llm_kwargs["mm_encoder_tp_mode"] = "data"
-
-            self.llm = LLM(**llm_kwargs)
         else:
             self.model = AutoModelForImageTextToText.from_pretrained(
                 model_path,

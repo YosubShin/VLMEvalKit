@@ -56,6 +56,7 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_GPU_MEMORY_UTILIZATION=0.85
 
 # --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct \
+# --pass-custom-model Qwen/Qwen3-VL-8B-Instruct \
 
 srun uv run run.py \
 --pass-custom-model /home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune/output/11k/qwen3-vl-8b-instruct/checkpoint-520 \

@@ -23,10 +23,9 @@ hpc = [
     "triton",
     "ninja",
     "accelerate==1.7.0",
-    "torch==2.6.0",
-    "torchvision==0.21.0",
-    "torchaudio==2.6.0",
-    "flash-attn==2.7.4.post1",
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+    "torchaudio==2.8.0",
     "antlr4-python3-runtime==4.11.0",
     "einops",
     "google-genai",
@@ -58,7 +57,7 @@ hpc = [
     "transformers",
     "typing_extensions",
     "validators",
-    "vllm>=0.6.4,<=0.8.4",
+    "vllm>=0.11.0",
     "xlsxwriter",
 ]
 
@@ -67,17 +66,17 @@ package = false
 no-build-isolation-package = ["flash-attn"]
 
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cu124", extra = "hpc" },
+  { index = "pytorch-cu128", extra = "hpc" },
 ]
 torchvision = [
-  { index = "pytorch-cu124", extra = "hpc" },
+  { index = "pytorch-cu128", extra = "hpc" },
 ]
 torchaudio = [
-  { index = "pytorch-cu124", extra = "hpc" },
+  { index = "pytorch-cu128", extra = "hpc" },
 ]

@@ -43,11 +43,29 @@ fi
 # Load any configured modules (edit these if your project needs different toolchains)
 module purge >/dev/null 2>&1 || true
 
-# Install local CUDA Toolkit 12.4 if not already present
-CUDA_MINOR_VERSION="12.4"
-CUDA_FULL_VERSION="12.4.1"
+# Install local CUDA Toolkit (configurable via CUDA_MINOR_VERSION).
+# Override CUDA_FULL_VERSION and CUDA_INSTALLER_TAG if using a version not listed below.
+CUDA_MINOR_VERSION="${CUDA_MINOR_VERSION:-12.8}"
+
+case "${CUDA_MINOR_VERSION}" in
+  12.4)
+    CUDA_FULL_VERSION="${CUDA_FULL_VERSION:-12.4.1}"
+    CUDA_INSTALLER_TAG="${CUDA_INSTALLER_TAG:-550.54.15}"
+    ;;
+  12.8)
+    CUDA_FULL_VERSION="${CUDA_FULL_VERSION:-12.8.0}"
+    CUDA_INSTALLER_TAG="${CUDA_INSTALLER_TAG:-570.86.10}"
+    ;;
+  *)
+    if [[ -z "${CUDA_FULL_VERSION:-}" || -z "${CUDA_INSTALLER_TAG:-}" ]]; then
+      log "Unsupported CUDA_MINOR_VERSION='${CUDA_MINOR_VERSION}'. Set CUDA_FULL_VERSION and CUDA_INSTALLER_TAG to override."
+      exit 1
+    fi
+    ;;
+esac
+
 CUDA_INSTALL_ROOT="${KOA_PROJECT_ROOT}/cuda-${CUDA_MINOR_VERSION}"
-CUDA_INSTALLER_FILE="cuda_${CUDA_FULL_VERSION}_550.54.15_linux.run"
+CUDA_INSTALLER_FILE="${CUDA_INSTALLER_FILE:-cuda_${CUDA_FULL_VERSION}_${CUDA_INSTALLER_TAG}_linux.run}"
 CUDA_INSTALLER_PATH="${KOA_PROJECT_ROOT}/${CUDA_INSTALLER_FILE}"
 CUDA_DOWNLOAD_URL="https://developer.download.nvidia.com/compute/cuda/${CUDA_FULL_VERSION}/local_installers/${CUDA_INSTALLER_FILE}"
 
