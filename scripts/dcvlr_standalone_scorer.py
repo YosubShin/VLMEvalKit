@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "anthropic>=0.34",
+#   "numpy>=1.24,<2",
+#   "openai>=1.12",
+#   "openpyxl>=3.1",
+#   "pandas>=2.2",
+#   "sympy>=1.12",
+#   "tqdm>=4.66",
+# ]
+# ///
 """
 DCVLR Standalone Scorer
 
