@@ -3,7 +3,7 @@
 #SBATCH --partition=kill-shared
 #SBATCH --time=01:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=16G
 
 set -euo pipefail
 
@@ -32,14 +32,6 @@ echo "KOA_RUN_METADATA_DIR=${KOA_RUN_METADATA_DIR:-unset}"
 echo "KOA_SHARED_ENV=${KOA_SHARED_ENV:-unset}"
 echo
 
-echo "==== GPU Info ====="
-if command -v nvidia-smi >/dev/null 2>&1; then
-  nvidia-smi
-else
-  echo "nvidia-smi not available"
-fi
-echo
-
 echo "==== Python Environment ====="
 if command -v python >/dev/null 2>&1; then
   which python
@@ -53,9 +45,12 @@ source "scripts/setup_env_simple.sh"
 
 #     --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/Qwen_Qwen2.5-VL-7B-Instruct \
 #      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/_home_yosubs_koa_scratch_oumi_output_qwen2_5_vl_7b_walton_hard_cosyn_traces_1k  \
+# --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
 
 srun uv run scripts/dcvlr_standalone_scorer.py \
       --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
       --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/_home_yosubs_koa_scratch_oumi_output_qwen2_5_vl_7b_walton_hard_cosyn_traces_1k  \
       --llm-backend openai --model gpt-4o-mini \
+      --num-workers 8 \
+      --resume \
       --verbose

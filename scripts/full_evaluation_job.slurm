@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=VLMEvalKit
 #SBATCH --partition=kill-shared
-#SBATCH --time=08:00:00
+#SBATCH --time=02:00:00
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --gres=gpu:nvidia_h200_nvl:1
@@ -63,7 +63,7 @@ export VLLM_GPU_MEMORY_UTILIZATION=0.85
 srun uv run run.py \
 --pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct \
 --mode infer \
---data OlympiadBench \
+--data VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
 --work-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs \
 --use-vllm \
 --max-output-tokens 8192 \
@@ -72,8 +72,9 @@ srun uv run run.py \
 --reuse \
 --judge gpt-4o-mini
 
-# srun uv run scripts/dcvlr_standalone_scorer.py \
-#       --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
-#       --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/Qwen_Qwen2.5-VL-7B-Instruct  \
-#       --llm-backend openai --model gpt-4o-mini \
-#       --resume --verbose
+srun uv run scripts/dcvlr_standalone_scorer.py \
+      --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
+      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/Qwen_Qwen2.5-VL-7B-Instruct  \
+      --llm-backend openai --model gpt-4o-mini \
+      --num-workers 8 \
+      --verbose

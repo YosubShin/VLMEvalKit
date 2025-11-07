@@ -35,8 +35,9 @@ import random
 import sys
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -83,7 +84,8 @@ class VLMEvalKitScorer:
     
     def __init__(self, benchmarks: List[str], input_dir: str, output_dir: Optional[str] = None,
                  llm_backend: str = 'openai', model: str = 'gpt-4o-mini', 
-                 api_key: Optional[str] = None, verbose: bool = False, max_samples: Optional[int] = None, resume: bool = False):
+                 api_key: Optional[str] = None, verbose: bool = False, max_samples: Optional[int] = None,
+                 resume: bool = False, num_workers: Optional[int] = None):
         """
         Initialize the VMCBench scorer.
         
@@ -97,6 +99,7 @@ class VLMEvalKitScorer:
             verbose: Enable verbose logging
             max_samples: Maximum number of samples to process per benchmark (for testing)
             resume: Resume from existing results file by skipping processed samples
+            num_workers: Number of worker threads for the scoring pipeline
         """
         self.benchmarks = benchmarks
         self.input_dir = Path(input_dir)
@@ -104,6 +107,11 @@ class VLMEvalKitScorer:
         self.verbose = verbose
         self.max_samples = max_samples
         self.resume = resume
+        cpu_count = os.cpu_count() or 4
+        if num_workers is None:
+            self.num_workers = max(1, min(8, cpu_count))
+        else:
+            self.num_workers = max(1, num_workers)
         
         # Setup logging
         self._setup_logging()
@@ -980,6 +988,86 @@ class VLMEvalKitScorer:
         
         return None
 
+    def _process_single_row(self, row: pd.Series) -> Dict[str, Any]:
+        """Run the four-stage pipeline for a single row."""
+        row = row.copy()
+        prediction = str(row['prediction'])
+        answer = str(row['answer'])
+
+        choices_dict = self._extract_choices(row)
+        row_result: Dict[str, Any] = {
+            'stage1_match': 0,
+            'stage2_match': 0,
+            'stage3_match': 0,
+            'stage4_match': 0,
+            'final_answer': '',
+            'hit': 0,
+            'stage_errors': ''
+        }
+
+        errors = []
+        final_answer = None
+        try:
+            stage1_result, stage1_success, stage1_error = self.stage1_simple_match(prediction, answer)
+            if stage1_success:
+                row_result['stage1_match'] = 1
+                final_answer = stage1_result
+            errors.append(f"Stage1: {stage1_error}")
+        except Exception as e:
+            errors.append(f"Stage1: ERROR - {str(e)}")
+            stage1_success = False
+
+        if not stage1_success:
+            try:
+                stage2_result, stage2_success, stage2_error = self.stage2_complex_match(
+                    prediction, answer, choices_dict
+                )
+                if stage2_success:
+                    row_result['stage2_match'] = 1
+                    final_answer = stage2_result
+                errors.append(f"Stage2: {stage2_error}")
+            except Exception as e:
+                errors.append(f"Stage2: ERROR - {str(e)}")
+                stage2_success = False
+        else:
+            errors.append("Stage2: Skipped - Stage 1 succeeded")
+            stage2_success = False
+
+        if not (stage1_success or stage2_success):
+            try:
+                stage3_result, stage3_success, stage3_error = self.stage3_llm_judge(
+                    prediction, answer, choices_dict
+                )
+                if stage3_success:
+                    row_result['stage3_match'] = 1
+                    final_answer = stage3_result
+                errors.append(f"Stage3: {stage3_error}")
+            except Exception as e:
+                errors.append(f"Stage3: ERROR - {str(e)}")
+                stage3_success = False
+        else:
+            errors.append("Stage3: Skipped - Earlier stage succeeded")
+            stage3_success = False
+
+        if not (stage1_success or stage2_success or stage3_success):
+            final_answer = "NOMATCH"
+            row_result['stage4_match'] = 1
+            errors.append("Stage4: Fallback - NOMATCH")
+        else:
+            errors.append("Stage4: Not needed")
+
+        row_result['final_answer'] = final_answer or "NOMATCH"
+
+        if 'answer_type' in row and row['answer_type'] == 'float':
+            score_result = self._calculate_mra_score(final_answer, answer)
+            row_result['hit'] = score_result['score']
+            row_result['mra_details'] = score_result.get('mra_details', '')
+        else:
+            row_result['hit'] = 1 if final_answer == answer else 0
+
+        row_result['stage_errors'] = " | ".join(errors)
+        return row_result
+
     def apply_four_stage_pipeline(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Apply the 4-stage answer matching pipeline to all rows.
@@ -990,107 +1078,46 @@ class VLMEvalKitScorer:
         Returns:
             DataFrame with additional scoring columns
         """
-        results = []
-        
-        self.logger.info("Applying 4-stage pipeline...")
-        
-        for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing rows"):
-            prediction = str(row['prediction'])
-            answer = str(row['answer'])
-            
-            # Extract choices if available (for MCQ datasets)
-            choices_dict = self._extract_choices(row)
-            
-            # Initialize results for this row
-            row_result = {
-                'stage1_match': 0,
-                'stage2_match': 0, 
-                'stage3_match': 0,
-                'stage4_match': 0,
-                'final_answer': '',
-                'hit': 0,
-                'stage_errors': ''
-            }
-            
-            errors = []
-            final_answer = None
-            success_stage = None
-            
-            # Stage 1: Simple matching
-            try:
-                stage1_result, stage1_success, stage1_error = self.stage1_simple_match(prediction, answer)
-                if stage1_success:
-                    row_result['stage1_match'] = 1
-                    final_answer = stage1_result
-                    success_stage = 1
-                errors.append(f"Stage1: {stage1_error}")
-            except Exception as e:
-                errors.append(f"Stage1: ERROR - {str(e)}")
-                stage1_success = False
-            
-            # Stage 2: Complex matching (if Stage 1 failed)
-            if not stage1_success:
-                try:
-                    stage2_result, stage2_success, stage2_error = self.stage2_complex_match(
-                        prediction, answer, choices_dict
-                    )
-                    if stage2_success:
-                        row_result['stage2_match'] = 1
-                        final_answer = stage2_result
-                        success_stage = 2
-                    errors.append(f"Stage2: {stage2_error}")
-                except Exception as e:
-                    errors.append(f"Stage2: ERROR - {str(e)}")
-                    stage2_success = False
-            else:
-                errors.append("Stage2: Skipped - Stage 1 succeeded")
-                stage2_success = False
-            
-            # Stage 3: LLM judge (if Stages 1-2 failed)
-            if not (stage1_success or stage2_success):
-                try:
-                    stage3_result, stage3_success, stage3_error = self.stage3_llm_judge(prediction, answer, choices_dict)
-                    if stage3_success:
-                        row_result['stage3_match'] = 1
-                        final_answer = stage3_result
-                        success_stage = 3
-                    errors.append(f"Stage3: {stage3_error}")
-                except Exception as e:
-                    errors.append(f"Stage3: ERROR - {str(e)}")
-                    stage3_success = False
-            else:
-                errors.append("Stage3: Skipped - Earlier stage succeeded")
-                stage3_success = False
-            
-            # Stage 4: Fallback
-            if not (stage1_success or stage2_success or stage3_success):
-                final_answer = "NOMATCH"
-                row_result['stage4_match'] = 1
-                success_stage = 4
-                errors.append("Stage4: Fallback - NOMATCH")
-            else:
-                errors.append("Stage4: Not needed")
-            
-            # Set final results
-            row_result['final_answer'] = final_answer or "NOMATCH"
-            
-            # Determine scoring method based on answer_type column
-            if 'answer_type' in row and row['answer_type'] == 'float':
-                # Use MRA (Mean Relative Accuracy) scoring for float answer types
-                score_result = self._calculate_mra_score(final_answer, answer)
-                row_result['hit'] = score_result['score']
-                row_result['mra_details'] = score_result.get('mra_details', '')
-            else:
-                # Use exact match scoring for all other answer types
-                row_result['hit'] = 1 if final_answer == answer else 0
-                
-            row_result['stage_errors'] = " | ".join(errors)
-            
-            results.append(row_result)
-            
-            # Save intermediate results every 100 rows
-            if (idx + 1) % 100 == 0:
-                self._save_intermediate_results(df, results, idx + 1)
+        total_rows = len(df)
+        if total_rows == 0:
+            return df
+
+        worker_count = max(1, min(self.num_workers, total_rows))
+
+        self.logger.info(
+            "Applying 4-stage pipeline with %d worker(s) for %d rows...",
+            worker_count,
+            total_rows,
+        )
+
+        results: List[Dict[str, Any]] = []
+        if worker_count == 1:
+            row_source = (row for _, row in df.iterrows())
+        else:
+            # materialize rows so each worker receives an independent copy
+            row_source = [row for _, row in df.iterrows()]
+
+        executor = None
+        if worker_count == 1:
+            row_iter = (self._process_single_row(row) for row in row_source)
+        else:
+            executor = ThreadPoolExecutor(max_workers=worker_count)
+            row_iter = executor.map(self._process_single_row, row_source)
+
+        processed_count = 0
+        try:
+            for row_result in tqdm(
+                row_iter,
+                total=total_rows,
+                desc="Processing rows",
+            ):
+                results.append(row_result)
+                processed_count += 1
+                if processed_count % 100 == 0:
+                    self._save_intermediate_results(df, results, processed_count)
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=True)
         
         # Combine original data with results
         results_df = pd.DataFrame(results)
@@ -1716,6 +1743,11 @@ Examples:
         action='store_true',
         help='Resume from existing results file by skipping already processed samples'
     )
+    parser.add_argument(
+        '--num-workers',
+        type=int,
+        help='Number of worker threads for the scoring pipeline (defaults to min(8, CPU cores))'
+    )
     
     args = parser.parse_args()
     
@@ -1729,7 +1761,8 @@ Examples:
         api_key=args.api_key,
         verbose=args.verbose,
         max_samples=args.max_samples,
-        resume=args.resume
+        resume=args.resume,
+        num_workers=args.num_workers,
     )
     
     scorer.process_all()
