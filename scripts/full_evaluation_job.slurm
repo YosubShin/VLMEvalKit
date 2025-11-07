@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=VLMEvalKit
 #SBATCH --partition=kill-shared
-#SBATCH --time=02:00:00
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=128G
-#SBATCH --gres=gpu:nvidia_h200_nvl:1
+#SBATCH --time=04:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --constraint="hopper|ampere"
+#SBATCH --gres=gpu:1
 
 set -euo pipefail
 
@@ -41,6 +42,33 @@ else
 fi
 echo
 
+echo "==== GPU Memory Detection ===="
+# Query first GPU's name and total VRAM (in MB)
+GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1 | xargs)
+GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n1 | xargs)
+
+echo "Detected GPU: ${GPU_NAME} with ${GPU_MEM} MB VRAM"
+
+# Default settings
+BATCH_SIZE=4
+DTYPE="bfloat16"
+
+# Adjust batch size and other configs based on VRAM capacity
+if (( GPU_MEM < 20000 )); then
+    echo "⚠️ GPU has <20GB VRAM — too small for Qwen2.5-VL-7B vLLM."
+    exit 1
+elif (( GPU_MEM < 30000 )); then
+    BATCH_SIZE=2
+elif (( GPU_MEM < 50000 )); then
+    BATCH_SIZE=4
+elif (( GPU_MEM < 80000 )); then
+    BATCH_SIZE=16
+else
+    BATCH_SIZE=32
+fi
+
+echo "Using batch size: ${BATCH_SIZE}"
+
 echo "==== Python Environment ====="
 if command -v python >/dev/null 2>&1; then
   which python
@@ -61,20 +89,20 @@ export VLLM_GPU_MEMORY_UTILIZATION=0.85
 # --data VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
 
 srun uv run run.py \
---pass-custom-model Qwen/Qwen2.5-VL-7B-Instruct \
+--pass-custom-model /home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_oumi_10k \
 --mode infer \
 --data VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
 --work-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs \
 --use-vllm \
 --max-output-tokens 8192 \
---batch-size 64 \
---api-nproc 16 \
+--batch-size ${BATCH_SIZE} \
+--api-nproc 8 \
 --reuse \
 --judge gpt-4o-mini
 
 srun uv run scripts/dcvlr_standalone_scorer.py \
       --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
-      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/Qwen_Qwen2.5-VL-7B-Instruct  \
+      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/_home_yosubs_koa_scratch_oumi_output_qwen2_5_vl_7b_walton_oumi_10k  \
       --llm-backend openai --model gpt-4o-mini \
       --num-workers 8 \
       --verbose
