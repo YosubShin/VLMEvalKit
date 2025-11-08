@@ -107,6 +107,7 @@ class VLMEvalKitScorer:
         self.verbose = verbose
         self.max_samples = max_samples
         self.resume = resume
+        self._invalid_char_pattern = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
         cpu_count = os.cpu_count() or 4
         if num_workers is None:
             self.num_workers = max(1, min(8, cpu_count))
@@ -265,6 +266,16 @@ class VLMEvalKitScorer:
                 choices[choice_letter] = str(row[choice_letter])
         return choices
     
+    def _sanitize_text(self, value: Any) -> Any:
+        """Strip worksheet-illegal control characters from strings."""
+        if isinstance(value, str):
+            return self._invalid_char_pattern.sub('', value)
+        return value
+
+    def _sanitize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply text sanitization across an entire DataFrame."""
+        return df.applymap(self._sanitize_text)
+    
     def _filter_unprocessed_samples(self, df: pd.DataFrame, file_path: Path, benchmark_name: str) -> pd.DataFrame:
         """
         Filter out samples that have already been processed when resuming.
@@ -328,6 +339,7 @@ class VLMEvalKitScorer:
         try:
             existing_df = pd.read_excel(output_path)
             combined_df = pd.concat([existing_df, new_results], ignore_index=True)
+            combined_df = self._sanitize_dataframe(combined_df)
             combined_df.to_excel(output_path, index=False)
             self.logger.info(f"Appended {len(new_results)} new results to existing file")
         except Exception as e:
@@ -354,6 +366,7 @@ class VLMEvalKitScorer:
         
         # Apply 4-stage pipeline
         df_scored = self.apply_four_stage_pipeline(df)
+        df_scored = self._sanitize_dataframe(df_scored)
         
         # Save results
         output_path = self.output_dir / f"{file_path.stem}_scored.xlsx"
@@ -1056,16 +1069,16 @@ class VLMEvalKitScorer:
         else:
             errors.append("Stage4: Not needed")
 
-        row_result['final_answer'] = final_answer or "NOMATCH"
+        row_result['final_answer'] = self._sanitize_text(final_answer or "NOMATCH")
 
         if 'answer_type' in row and row['answer_type'] == 'float':
             score_result = self._calculate_mra_score(final_answer, answer)
             row_result['hit'] = score_result['score']
-            row_result['mra_details'] = score_result.get('mra_details', '')
+            row_result['mra_details'] = self._sanitize_text(score_result.get('mra_details', ''))
         else:
             row_result['hit'] = 1 if final_answer == answer else 0
 
-        row_result['stage_errors'] = " | ".join(errors)
+        row_result['stage_errors'] = self._sanitize_text(" | ".join(errors))
         return row_result
 
     def apply_four_stage_pipeline(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -1245,6 +1258,7 @@ class VLMEvalKitScorer:
             partial_df = df.iloc[:processed_count].copy()
             partial_results_df = pd.DataFrame(results)
             combined_df = pd.concat([partial_df, partial_results_df], axis=1)
+            combined_df = self._sanitize_dataframe(combined_df)
             
             # Save to temporary file with processed count in filename
             temp_filename = f"intermediate_results_{processed_count}_rows.xlsx"
