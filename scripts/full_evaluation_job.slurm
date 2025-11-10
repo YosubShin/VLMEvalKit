@@ -42,6 +42,12 @@ else
 fi
 echo
 
+if [[ "${CUDA_VISIBLE_DEVICES:-}" =~ MIG- ]]; then
+  echo "Detected CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+  echo "This job was scheduled onto a MIG slice, which vLLM cannot handle yet. Exiting early so the job can be resubmitted to a full GPU."
+  exit 2
+fi
+
 echo "==== GPU Memory Detection ===="
 # Query first GPU's name and total VRAM (in MB)
 GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1 | xargs)
@@ -89,7 +95,7 @@ export VLLM_GPU_MEMORY_UTILIZATION=0.85
 # --data VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
 
 srun uv run run.py \
---pass-custom-model /home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_oumi_10k \
+--pass-custom-model /home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_random_1k_1 \
 --mode infer \
 --data VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
 --work-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs \
@@ -102,7 +108,7 @@ srun uv run run.py \
 
 srun uv run scripts/dcvlr_standalone_scorer.py \
       --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
-      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/_home_yosubs_koa_scratch_oumi_output_qwen2_5_vl_7b_walton_oumi_10k  \
+      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/_home_yosubs_koa_scratch_oumi_output_qwen2_5_vl_7b_walton_random_1k_1  \
       --llm-backend openai --model gpt-4o-mini \
       --num-workers 8 \
       --verbose

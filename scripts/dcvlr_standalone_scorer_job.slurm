@@ -49,8 +49,7 @@ source "scripts/setup_env_simple.sh"
 
 srun uv run scripts/dcvlr_standalone_scorer.py \
       --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
-      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/Qwen_Qwen2.5-VL-7B-Instruct  \
+      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/_home_yosubs_koa_scratch_oumi_output_qwen2_5_vl_7b_walton_random_1k_1  \
       --llm-backend openai --model gpt-4o-mini \
       --num-workers 8 \
-      --resume \
       --verbose
