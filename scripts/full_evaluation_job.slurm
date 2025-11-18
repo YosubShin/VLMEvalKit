@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=VLMEvalKit
 #SBATCH --partition=kill-shared
-#SBATCH --time=04:00:00
+#SBATCH --time=06:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --constraint="hopper|ampere"
+#SBATCH --constraint="hopper"
 #SBATCH --gres=gpu:1
 
 set -euo pipefail
@@ -60,17 +60,15 @@ BATCH_SIZE=4
 DTYPE="bfloat16"
 
 # Adjust batch size and other configs based on VRAM capacity
-if (( GPU_MEM < 20000 )); then
-    echo "⚠️ GPU has <20GB VRAM — too small for Qwen2.5-VL-7B vLLM."
+if (( GPU_MEM < 30000 )); then
+    echo "⚠️ GPU has <30GB VRAM — too small for Qwen2.5-VL-7B vLLM."
     exit 1
-elif (( GPU_MEM < 30000 )); then
-    BATCH_SIZE=2
 elif (( GPU_MEM < 50000 )); then
-    BATCH_SIZE=4
+    BATCH_SIZE=8
 elif (( GPU_MEM < 80000 )); then
     BATCH_SIZE=16
 else
-    BATCH_SIZE=32
+    BATCH_SIZE=50
 fi
 
 echo "Using batch size: ${BATCH_SIZE}"
@@ -93,14 +91,19 @@ export VLLM_GPU_MEMORY_UTILIZATION=0.85
 # --pass-custom-model Qwen/Qwen3-VL-8B-Instruct \
 # --pass-custom-model /home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune/output/11k/qwen3-vl-8b-instruct/checkpoint-520 \
 # --data VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
+# --pass-custom-model /home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_random_1k_1 \
+
+# Allow overriding the model path while keeping a filesystem-safe label for outputs.
+CUSTOM_MODEL="${CUSTOM_MODEL:-/mnt/lustre/koa/scratch/yosubs/koa-cli/projects/oumi/jobs/20251117_005659_oumi-walton-include-none-of-above/results/checkpoints}"
+CUSTOM_MODEL_SAFE="${CUSTOM_MODEL//\//_}"
 
 srun uv run run.py \
---pass-custom-model /home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_random_1k_1 \
+--pass-custom-model "${CUSTOM_MODEL}" \
 --mode infer \
 --data VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
---work-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs \
+--work-dir "${RESULTS_DIR}" \
 --use-vllm \
---max-output-tokens 8192 \
+--max-output-tokens 4096 \
 --batch-size ${BATCH_SIZE} \
 --api-nproc 8 \
 --reuse \
@@ -108,7 +111,7 @@ srun uv run run.py \
 
 srun uv run scripts/dcvlr_standalone_scorer.py \
       --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
-      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/_home_yosubs_koa_scratch_oumi_output_qwen2_5_vl_7b_walton_random_1k_1  \
+      --input-dir "${RESULTS_DIR}/${CUSTOM_MODEL_SAFE}" \
       --llm-backend openai --model gpt-4o-mini \
       --num-workers 8 \
       --verbose

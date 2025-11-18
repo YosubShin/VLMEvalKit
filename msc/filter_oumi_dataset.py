@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from collections import defaultdict
 from typing import Dict, Iterable, Optional, Tuple
 
 import pandas as pd
@@ -30,6 +31,16 @@ def parse_args() -> argparse.Namespace:
             "Filter oumi-ai/walton-multimodal-cold-start-r1-format by domain labels derived "
             "from the full multimodal dataset, optionally sample, and create a Hugging Face dataset."
         )
+    )
+    parser.add_argument(
+        "--per-domain-cap",
+        type=int,
+        help="Maximum number of examples to retain per domain (applied before final sampling).",
+    )
+    parser.add_argument(
+        "--full-domain",
+        action="append",
+        help="Domains that bypass the per-domain cap (can be provided multiple times).",
     )
     parser.add_argument(
         "--base-excel",
@@ -175,6 +186,40 @@ def filter_dataset(dataset: Dataset, include_domains: Optional[Iterable[str]], e
     return dataset
 
 
+def limit_per_domain(
+    dataset: Dataset,
+    per_domain_cap: Optional[int],
+    full_domains: Optional[Iterable[str]],
+    seed: int,
+) -> Dataset:
+    if per_domain_cap is None or per_domain_cap <= 0:
+        return dataset
+
+    full_domains_set = {d for d in (full_domains or []) if d is not None}
+    domain_indices: Dict[str, list[int]] = defaultdict(list)
+    for idx, domain in enumerate(dataset["domain"]):
+        domain_indices[domain].append(idx)
+
+    import random
+
+    rng = random.Random(seed)
+    selected_indices: list[int] = []
+    for domain in sorted(domain_indices):
+        indices = domain_indices[domain]
+        if domain in full_domains_set:
+            selected_indices.extend(indices)
+            continue
+        cap = min(per_domain_cap, len(indices))
+        if cap >= len(indices):
+            selected_indices.extend(indices)
+        else:
+            sampled = rng.sample(indices, cap)
+            selected_indices.extend(sorted(sampled))
+
+    selected_indices.sort()
+    return dataset.select(selected_indices)
+
+
 def sample_dataset(dataset: Dataset, sample_size: Optional[int], seed: int) -> Dataset:
     if sample_size is None or sample_size <= 0 or sample_size >= len(dataset):
         return dataset
@@ -208,6 +253,10 @@ def main() -> None:
 
     dataset = filter_dataset(dataset, args.include_domain, args.exclude_domain)
     print(f"Remaining rows after domain filtering: {len(dataset)}")
+
+    if args.per_domain_cap:
+        dataset = limit_per_domain(dataset, args.per_domain_cap, args.full_domain, args.seed)
+        print(f"Rows after per-domain limiting: {len(dataset)}")
 
     dataset = sample_dataset(dataset, args.sample_size, args.seed)
     print(f"Rows after sampling: {len(dataset)}")

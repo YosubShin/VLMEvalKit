@@ -220,3 +220,4 @@ notes
 
 private
 .DS_Store
+~*.xlsx
