@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from collections import defaultdict
+import math
+import random
+from collections import Counter, defaultdict
 from typing import Dict, Iterable, Optional, Tuple
 
 import pandas as pd
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, concatenate_datasets, load_dataset
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,6 +45,14 @@ def parse_args() -> argparse.Namespace:
         help="Domains that bypass the per-domain cap (can be provided multiple times).",
     )
     parser.add_argument(
+        "--full-domain-ratio",
+        type=float,
+        help=(
+            "Fraction of the final sample reserved for --full-domain entries. "
+            "Requires --sample-size and at least one full domain."
+        ),
+    )
+    parser.add_argument(
         "--base-excel",
         default="msc/multimodal_cold_start_with_domains.xlsx",
         help="Excel file containing problem/answer/domain columns (default: %(default)s).",
@@ -60,8 +70,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exclude-domain",
         action="append",
-        default=["Geometry"],
-        help="Domain name to exclude (can be provided multiple times). Default removes 'Geometry'.",
+        help="Domain name to exclude (can be provided multiple times).",
     )
     parser.add_argument(
         "--include-domain",
@@ -73,6 +82,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1000,
         help="Number of random samples to keep after filtering (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--weighting",
+        choices=["uniform", "log"],
+        default="uniform",
+        help="Sampling strategy for the final subset (default: uniform random).",
     )
     parser.add_argument(
         "--seed",
@@ -186,6 +201,13 @@ def filter_dataset(dataset: Dataset, include_domains: Optional[Iterable[str]], e
     return dataset
 
 
+def log_domain_counts(stage: str, dataset: Dataset) -> None:
+    counts = Counter(dataset["domain"])
+    print(f"Domain distribution after {stage} (total={len(dataset)}):")
+    for domain, count in counts.most_common():
+        print(f"  {domain}: {count}")
+
+
 def limit_per_domain(
     dataset: Dataset,
     per_domain_cap: Optional[int],
@@ -199,8 +221,6 @@ def limit_per_domain(
     domain_indices: Dict[str, list[int]] = defaultdict(list)
     for idx, domain in enumerate(dataset["domain"]):
         domain_indices[domain].append(idx)
-
-    import random
 
     rng = random.Random(seed)
     selected_indices: list[int] = []
@@ -220,11 +240,138 @@ def limit_per_domain(
     return dataset.select(selected_indices)
 
 
-def sample_dataset(dataset: Dataset, sample_size: Optional[int], seed: int) -> Dataset:
+def perform_final_sampling(
+    dataset: Dataset,
+    sample_size: Optional[int],
+    weighting: str,
+    full_domain_ratio: Optional[float],
+    full_domains: set[str],
+    seed: int,
+) -> Dataset:
+    if sample_size is None or sample_size <= 0:
+        print("Sample size not specified or non-positive; skipping final sampling.")
+        log_domain_counts("final sampling", dataset)
+        return dataset
+
+    if not full_domains or full_domain_ratio is None or math.isclose(full_domain_ratio, 0.0):
+        sampled = sample_dataset(dataset, sample_size, weighting, seed)
+        print(f"Rows after sampling: {len(sampled)}")
+        log_domain_counts("final sampling", sampled)
+        return sampled
+
+    full_subset = dataset.filter(lambda example: example["domain"] in full_domains)
+    if len(full_subset) == 0:
+        sampled = sample_dataset(dataset, sample_size, weighting, seed)
+        print(f"Rows after sampling: {len(sampled)}")
+        log_domain_counts("final sampling", sampled)
+        return sampled
+
+    other_subset = dataset.filter(lambda example: example["domain"] not in full_domains)
+
+    quota = int(round(sample_size * full_domain_ratio))
+    quota = max(0, min(sample_size, quota))
+    if quota == 0:
+        selected_full = full_subset.select(range(0))
+    else:
+        selected_full = uniform_sample(full_subset, quota, seed)
+
+    selected_full_count = len(selected_full)
+    print(
+        f"Full-domain selection: kept {selected_full_count} of {len(full_subset)} candidates (quota={quota})."
+    )
+    log_domain_counts("full-domain selection", selected_full)
+
+    remaining = max(sample_size - selected_full_count, 0)
+    rest_sample = None
+    if remaining > 0 and len(other_subset) > 0:
+        rest_sample = sample_dataset(other_subset, remaining, weighting, seed + 1)
+        print(f"Weighted sampling for remaining pool: selected {len(rest_sample)} rows (target={remaining}).")
+        log_domain_counts("weighted sampling", rest_sample)
+
+    parts = [ds for ds in (selected_full, rest_sample) if ds is not None and len(ds) > 0]
+    if not parts:
+        combined = dataset.select(range(0))
+    elif len(parts) == 1:
+        combined = parts[0]
+    else:
+        combined = concatenate_datasets(parts)
+
+    print(f"Rows after combined sampling: {len(combined)}")
+    log_domain_counts("final sampling", combined)
+    return combined
+
+
+def uniform_sample(dataset: Dataset, sample_size: Optional[int], seed: int) -> Dataset:
     if sample_size is None or sample_size <= 0 or sample_size >= len(dataset):
         return dataset
     shuffled = dataset.shuffle(seed=seed)
     return shuffled.select(range(sample_size))
+
+
+def log_weighted_sample(dataset: Dataset, sample_size: Optional[int], seed: int) -> Dataset:
+    if sample_size is None or sample_size <= 0 or sample_size >= len(dataset):
+        return dataset
+
+    domain_indices: Dict[str, list[int]] = defaultdict(list)
+    for idx, domain in enumerate(dataset["domain"]):
+        domain_indices[domain].append(idx)
+
+    weights = {domain: math.log1p(len(indices)) for domain, indices in domain_indices.items()}
+    total_weight = sum(weights.values())
+    if total_weight == 0:
+        return uniform_sample(dataset, sample_size, seed)
+
+    quotas = {}
+    remainders = []
+    allocated = 0
+
+    for domain, weight in weights.items():
+        target = sample_size * weight / total_weight
+        count = min(len(domain_indices[domain]), int(math.floor(target)))
+        quotas[domain] = count
+        allocated += count
+        remainder = target - count
+        if count < len(domain_indices[domain]):
+            remainders.append((remainder, domain))
+
+    remaining = min(sample_size - allocated, sum(max(0, len(idx) - quotas[dom]) for dom, idx in domain_indices.items()))
+    if remaining > 0 and remainders:
+        remainders.sort(reverse=True)
+        idx = 0
+        while remaining > 0 and idx < len(remainders):
+            _, domain = remainders[idx]
+            available = len(domain_indices[domain]) - quotas[domain]
+            if available > 0:
+                quotas[domain] += 1
+                remaining -= 1
+            idx += 1
+            if idx == len(remainders) and remaining > 0:
+                idx = 0
+
+    rng = random.Random(seed)
+    selected_indices: list[int] = []
+    for domain, indices in domain_indices.items():
+        quota = quotas.get(domain, 0)
+        if quota >= len(indices):
+            selected_indices.extend(indices)
+        elif quota > 0:
+            selected_indices.extend(sorted(rng.sample(indices, quota)))
+
+    if len(selected_indices) < sample_size:
+        missing = sample_size - len(selected_indices)
+        unused = sorted(set(range(len(dataset))) - set(selected_indices))
+        if unused:
+            extras = unused if missing >= len(unused) else rng.sample(unused, missing)
+            selected_indices.extend(sorted(extras))
+
+    selected_indices = sorted(selected_indices[:sample_size])
+    return dataset.select(selected_indices)
+
+
+def sample_dataset(dataset: Dataset, sample_size: Optional[int], weighting: str, seed: int) -> Dataset:
+    if weighting == "log":
+        return log_weighted_sample(dataset, sample_size, seed)
+    return uniform_sample(dataset, sample_size, seed)
 
 
 def push_dataset(dataset: Dataset, repo_id: str, commit_message: str, private: bool) -> None:
@@ -251,15 +398,25 @@ def main() -> None:
     if missing_domains:
         print(f"Warning: {missing_domains} rows missing domain labels after attachment (filled with '(blank)').")
 
+    full_domains_set = {d for d in (args.full_domain or []) if d is not None}
+
     dataset = filter_dataset(dataset, args.include_domain, args.exclude_domain)
     print(f"Remaining rows after domain filtering: {len(dataset)}")
+    log_domain_counts("domain filtering", dataset)
 
     if args.per_domain_cap:
-        dataset = limit_per_domain(dataset, args.per_domain_cap, args.full_domain, args.seed)
+        dataset = limit_per_domain(dataset, args.per_domain_cap, full_domains_set, args.seed)
         print(f"Rows after per-domain limiting: {len(dataset)}")
+        log_domain_counts("per-domain limiting", dataset)
 
-    dataset = sample_dataset(dataset, args.sample_size, args.seed)
-    print(f"Rows after sampling: {len(dataset)}")
+    dataset = perform_final_sampling(
+        dataset,
+        args.sample_size,
+        args.weighting,
+        args.full_domain_ratio,
+        full_domains_set,
+        args.seed,
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset.save_to_disk(str(output_dir))

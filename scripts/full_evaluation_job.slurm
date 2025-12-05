@@ -93,15 +93,19 @@ export VLLM_GPU_MEMORY_UTILIZATION=0.85
 # --data VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
 # --pass-custom-model /home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_random_1k_1 \
 
+# --work-dir "${RESULTS_DIR}" \
+# --input-dir "${RESULTS_DIR}/${CUSTOM_MODEL_SAFE}" \
+
+
 # Allow overriding the model path while keeping a filesystem-safe label for outputs.
-CUSTOM_MODEL="${CUSTOM_MODEL:-/mnt/lustre/koa/scratch/yosubs/koa-cli/projects/oumi/jobs/20251117_005659_oumi-walton-include-none-of-above/results/checkpoints}"
+CUSTOM_MODEL="${CUSTOM_MODEL:-/home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_random_5000_3}"
 CUSTOM_MODEL_SAFE="${CUSTOM_MODEL//\//_}"
 
 srun uv run run.py \
 --pass-custom-model "${CUSTOM_MODEL}" \
 --mode infer \
 --data VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
---work-dir "${RESULTS_DIR}" \
+--work-dir "/home/yosubs/koa_scratch/VLMEvalKit/outputs" \
 --use-vllm \
 --max-output-tokens 4096 \
 --batch-size ${BATCH_SIZE} \
@@ -109,9 +113,9 @@ srun uv run run.py \
 --reuse \
 --judge gpt-4o-mini
 
-srun uv run scripts/dcvlr_standalone_scorer.py \
-      --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
-      --input-dir "${RESULTS_DIR}/${CUSTOM_MODEL_SAFE}" \
-      --llm-backend openai --model gpt-4o-mini \
-      --num-workers 8 \
-      --verbose
+# srun uv run scripts/dcvlr_standalone_scorer.py \
+#       --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
+#       --input-dir "/home/yosubs/koa_scratch/VLMEvalKit/outputs/${CUSTOM_MODEL_SAFE}" \
+#       --llm-backend openai --model gpt-4o-mini \
+#       --num-workers 8 \
+#       --verbose

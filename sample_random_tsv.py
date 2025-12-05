@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "openpyxl>=3.1",
+#   "pandas>=2.1",
+# ]
+# ///
 """
 Sample random rows from a TSV file.
 

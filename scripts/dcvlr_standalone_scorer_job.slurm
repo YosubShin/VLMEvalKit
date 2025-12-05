@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=DCVLR_Scorer
 #SBATCH --partition=kill-shared
-#SBATCH --time=01:00:00
+#SBATCH --time=03:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
 
@@ -47,9 +47,42 @@ source "scripts/setup_env_simple.sh"
 #      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/_home_yosubs_koa_scratch_oumi_output_qwen2_5_vl_7b_walton_hard_cosyn_traces_1k  \
 # --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
 
+CUSTOM_MODEL="${CUSTOM_MODEL:-/home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_random_250_2}"
+CUSTOM_MODEL_SAFE="${CUSTOM_MODEL//\//_}"
+
 srun uv run scripts/dcvlr_standalone_scorer.py \
       --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
-      --input-dir /home/yosubs/koa_scratch/VLMEvalKit/outputs/_home_yosubs_koa_scratch_oumi_output_qwen2_5_vl_7b_walton_random_1k_1  \
+      --input-dir "/home/yosubs/koa_scratch/VLMEvalKit/outputs/${CUSTOM_MODEL_SAFE}" \
+      --llm-backend openai --model gpt-4o-mini \
+      --num-workers 8 \
+      --verbose
+
+CUSTOM_MODEL="${CUSTOM_MODEL:-/home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_random_250_3}"
+CUSTOM_MODEL_SAFE="${CUSTOM_MODEL//\//_}"
+
+srun uv run scripts/dcvlr_standalone_scorer.py \
+      --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
+      --input-dir "/home/yosubs/koa_scratch/VLMEvalKit/outputs/${CUSTOM_MODEL_SAFE}" \
+      --llm-backend openai --model gpt-4o-mini \
+      --num-workers 8 \
+      --verbose
+
+CUSTOM_MODEL="${CUSTOM_MODEL:-/home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_random_5000_2}"
+CUSTOM_MODEL_SAFE="${CUSTOM_MODEL//\//_}"
+
+srun uv run scripts/dcvlr_standalone_scorer.py \
+      --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
+      --input-dir "/home/yosubs/koa_scratch/VLMEvalKit/outputs/${CUSTOM_MODEL_SAFE}" \
+      --llm-backend openai --model gpt-4o-mini \
+      --num-workers 8 \
+      --verbose
+
+CUSTOM_MODEL="${CUSTOM_MODEL:-/home/yosubs/koa_scratch/oumi/output/qwen2_5_vl_7b_walton_random_5000_3}"
+CUSTOM_MODEL_SAFE="${CUSTOM_MODEL//\//_}"
+
+srun uv run scripts/dcvlr_standalone_scorer.py \
+      --benchmarks VMCBench_DEV LiveXivTQA OlympiadBench Omni3DBench atomic_dataset electro_dataset mechanics_dataset optics_dataset quantum_dataset statistics_dataset \
+      --input-dir "/home/yosubs/koa_scratch/VLMEvalKit/outputs/${CUSTOM_MODEL_SAFE}" \
       --llm-backend openai --model gpt-4o-mini \
       --num-workers 8 \
       --verbose

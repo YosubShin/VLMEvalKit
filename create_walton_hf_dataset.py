@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "datasets>=2.19",
+#   "huggingface_hub>=0.23",
+#   "pandas>=2.1",
+#   "Pillow>=10.3",
+# ]
+# ///
 """
 Create HuggingFace dataset from TSV file for WaltonMultimodalColdStart-hard.
 """

@@ -18,3 +18,5 @@ snapshot_excludes:
   - docker
   - docs
   - .venv
+  - outputs
+  - msc

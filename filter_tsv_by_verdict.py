@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "numpy>=1.24,<2",
+#   "openpyxl>=3.1",
+#   "pandas>=2.1",
+# ]
+# ///
 """
 Filter TSV rows based on verdict_sum from XLSX file to retain intermediate difficulty questions.
 
