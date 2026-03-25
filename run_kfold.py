@@ -168,12 +168,22 @@ Usage:
         default=42,
         help="Base seed for reproducibility (actual seed = base + k_iteration)",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit the number of dataset rows to process for debugging",
+    )
 
     args = parser.parse_args()
 
     # Validate arguments
     if args.k < 2:
         print("ERROR: K must be at least 2 for meaningful k-fold inference")
+        sys.exit(1)
+
+    if args.limit is not None and args.limit < 1:
+        print("ERROR: --limit must be at least 1")
         sys.exit(1)
 
     if not args.data:
@@ -1121,6 +1131,12 @@ def main():
 
         # Build dataset
         dataset = build_dataset(dataset_name)
+        if args.limit is not None:
+            original_size = len(dataset.data)
+            dataset.data = dataset.data.iloc[: args.limit].copy()
+            logger.info(
+                f"Debug limit enabled: processing {len(dataset.data)}/{original_size} rows"
+            )
 
         # Check if inference results already exist
         inference_file = osp.join(

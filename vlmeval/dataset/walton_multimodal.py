@@ -9,7 +9,10 @@ from ..utils import track_progress_rich
 class WaltonMultimodalReasoning(ImageBaseDataset):
     TYPE = "VQA"
 
-    DATASET_URL = {"WaltonMultimodalColdStart": ""}
+    DATASET_URL = {
+        "WaltonMultimodalColdStart": "oumi-ai/walton-multimodal-cold-start-r1-format",
+        "MM_MathInstruct": "oumi-ai/MM-MathInstruct-to-r1-format-filtered",
+    }
     DATASET_MD5 = {}
 
     def _build_vllm_judge(self, model_name, batch_size=32, **kwargs):
@@ -108,6 +111,10 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
         data_file = osp.join(ROOT, f"{dataset}.tsv")
 
         if not osp.exists(data_file):
+            repo_id = self.DATASET_URL.get(dataset)
+            if not repo_id:
+                raise ValueError(f"Unsupported dataset: {dataset}")
+
             # Import datasets library only when needed
             try:
                 from datasets import load_dataset
@@ -121,9 +128,7 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
             from ..tools import encode_image_to_base64
 
             # Load from HuggingFace
-            hf_dataset = load_dataset(
-                "oumi-ai/walton-multimodal-cold-start-r1-format", split="train"
-            )
+            hf_dataset = load_dataset(repo_id, split="train")
 
             # Convert to tsv format expected by VLMEvalKit
             data_list = []
