@@ -1,5 +1,7 @@
 import os.path as osp
+import io
 import pandas as pd
+from PIL import Image
 from .image_base import ImageBaseDataset
 from .utils import build_judge, DEBUG_MESSAGE
 from ..smp import *
@@ -105,6 +107,41 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
         super().__init__(dataset, **kwargs)
         self.dataset_name = dataset
 
+    def _normalize_image_field(self, image_value):
+        """Normalize Hugging Face image payloads into base64 strings for VLMEvalKit."""
+        if image_value is None:
+            return ""
+
+        # Standard HF Image feature representation: {"bytes": ..., "path": ...}
+        if isinstance(image_value, dict):
+            image_bytes = image_value.get("bytes")
+            image_path = image_value.get("path")
+
+            if image_bytes:
+                if isinstance(image_bytes, (bytes, bytearray)):
+                    with Image.open(io.BytesIO(image_bytes)) as img:
+                        return encode_image_to_base64(img)
+                if isinstance(image_bytes, str):
+                    # Some datasets already provide base64 or another string serialization.
+                    return image_bytes
+
+            if image_path and osp.exists(image_path):
+                return encode_image_file_to_base64(image_path)
+
+            return ""
+
+        # PIL image-like object from datasets.Image
+        if hasattr(image_value, "save") and hasattr(image_value, "mode"):
+            return encode_image_to_base64(image_value)
+
+        # Already serialized as a string (base64, URL, or path-like)
+        if isinstance(image_value, str):
+            if osp.exists(image_value):
+                return encode_image_file_to_base64(image_value)
+            return image_value
+
+        return ""
+
     def prepare_dataset(self, dataset):
         # Load dataset from HuggingFace
         ROOT = LMUDataRoot()
@@ -136,15 +173,8 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
                 # The problem field contains both image reference and question
                 problem_text = item["problem"]
 
-                # Handle image - if it's a PIL image, encode to base64
-                image_data = ""
-                if "image" in item and item["image"] is not None:
-                    # The image comes as PIL Image from HuggingFace parquet
-                    try:
-                        image_data = encode_image_to_base64(item["image"])
-                    except:
-                        # If it's already a string (URL or base64), use as is
-                        image_data = item["image"]
+                # Normalize image payloads into base64 for downstream dump_image().
+                image_data = self._normalize_image_field(item.get("image"))
 
                 data_list.append(
                     {
