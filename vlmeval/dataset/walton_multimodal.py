@@ -14,6 +14,7 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
     DATASET_URL = {
         "WaltonMultimodalColdStart": "oumi-ai/walton-multimodal-cold-start-r1-format",
         "MM_MathInstruct": "oumi-ai/MM-MathInstruct-to-r1-format-filtered",
+        "MultimodalOpenR1_8192_Filtered_Mid_IC": "oumi-ai/multimodal-open-r1-8192-filtered-mid-ic",
     }
     DATASET_MD5 = {}
 
