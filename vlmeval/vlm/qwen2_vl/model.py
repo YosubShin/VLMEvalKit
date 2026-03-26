@@ -276,7 +276,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         self.use_lmdeploy = kwargs.get("use_lmdeploy", False)
         self.limit_mm_per_prompt = VLLM_MAX_IMAGE_INPUT_NUM
         self.force_sequential_on_multimodal_vllm = kwargs.get(
-            "force_sequential_on_multimodal_vllm", True
+            "force_sequential_on_multimodal_vllm", False
         )
         self._mm_cache_disabled = False
         assert (
@@ -331,10 +331,16 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                     "Disabling vLLM multimodal preprocessor cache for %s to avoid mm_input_cache instability.",
                     self.model_path,
                 )
+            elif self.force_sequential_on_multimodal_vllm:
+                logging.warning(
+                    "This vLLM build does not expose a multimodal cache disable flag; "
+                    "using sequential multimodal requests because "
+                    "force_sequential_on_multimodal_vllm=True."
+                )
             else:
                 logging.warning(
                     "This vLLM build does not expose a multimodal cache disable flag; "
-                    "falling back to sequential multimodal requests for stability."
+                    "continuing with batched multimodal requests. This may be unstable."
                 )
             self.llm = LLM(
                 **llm_kwargs,

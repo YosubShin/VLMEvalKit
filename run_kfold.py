@@ -122,6 +122,14 @@ Usage:
         "--batch-size", type=int, default=None, help="Batch size for VLLM inference"
     )
     parser.add_argument(
+        "--force-sequential-multimodal-vllm",
+        action="store_true",
+        help=(
+            "Force sequential per-prompt processing for multimodal Qwen vLLM runs "
+            "when the vLLM build cannot disable the multimodal preprocessor cache"
+        ),
+    )
+    parser.add_argument(
         "--judge-batch-size",
         type=int,
         default=None,
@@ -1121,6 +1129,8 @@ def main():
     # Drive VLLM candidate count from k
     if args.k:
         model_kwargs["n"] = args.k
+    if args.force_sequential_multimodal_vllm:
+        model_kwargs["force_sequential_on_multimodal_vllm"] = True
 
     # Handle nproc/api-nproc
     nproc = args.api_nproc if args.api_nproc else args.nproc
