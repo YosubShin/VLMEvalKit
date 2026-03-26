@@ -122,6 +122,12 @@ Usage:
         "--batch-size", type=int, default=None, help="Batch size for VLLM inference"
     )
     parser.add_argument(
+        "--judge-batch-size",
+        type=int,
+        default=None,
+        help="Batch size for judge evaluation (Walton/vLLM judge path)",
+    )
+    parser.add_argument(
         "--max-output-tokens",
         type=int,
         default=None,
@@ -1306,7 +1312,9 @@ def main():
             logger.info(f"Starting evaluation with judge: {args.judge}")
             judge_kwargs = {
                 "model": args.judge if args.judge else "gpt-4o-mini",
-                "batch_size": args.batch_size if args.batch_size else 32,
+                "batch_size": (
+                    args.judge_batch_size if args.judge_batch_size else 32
+                ),
                 "use_vllm_judge": use_vllm_judge,
                 "nproc": args.api_nproc if args.api_nproc else args.nproc,
                 "verbose": args.verbose,
