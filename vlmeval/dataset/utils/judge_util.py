@@ -7,7 +7,10 @@ INTERNAL = os.environ.get('INTERNAL', 0)
 def build_judge(**kwargs):
     from ...api import OpenAIWrapper, SiliconFlowAPI, HFChatModel
     model = kwargs.pop('model', None)
-    kwargs.pop('nproc', None)
+    # Remove VLMEvalKit control-plane kwargs before constructing a judge.
+    # API-backed judges may forward unknown kwargs into request payloads.
+    for key in ['nproc', 'batch_size', 'use_vllm_judge']:
+        kwargs.pop(key, None)
     load_env()
     LOCAL_LLM = os.environ.get('LOCAL_LLM', None)
     if LOCAL_LLM is None:
