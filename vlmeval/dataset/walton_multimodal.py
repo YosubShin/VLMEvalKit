@@ -39,7 +39,7 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
                 "max_num_seqs": batch_size,
                 "tensor_parallel_size": tp_size,
                 "gpu_memory_utilization": 0.9,  # Make sure to unload main model before evaluation
-                "max_model_len": 8192,  # Judge prompts are short
+                "max_model_len": 16384,  # Judge prompts are short
             }
 
             from ..smp import get_logger
