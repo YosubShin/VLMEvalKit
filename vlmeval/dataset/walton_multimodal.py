@@ -15,6 +15,7 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
         "WaltonMultimodalColdStart": "oumi-ai/walton-multimodal-cold-start-r1-format",
         "MM_MathInstruct": "oumi-ai/MM-MathInstruct-to-r1-format-filtered",
         "MultimodalOpenR1_8192_Filtered_Mid_IC": "oumi-ai/multimodal-open-r1-8192-filtered-mid-ic",
+        "MultimodalOpenR1_8K_Verified": "lmms-lab/multimodal-open-r1-8k-verified",
     }
     DATASET_MD5 = {}
 
