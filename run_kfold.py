@@ -1308,6 +1308,7 @@ def main():
                 "model": args.judge if args.judge else "gpt-4o-mini",
                 "batch_size": args.batch_size if args.batch_size else 32,
                 "use_vllm_judge": use_vllm_judge,
+                "nproc": args.api_nproc if args.api_nproc else args.nproc,
                 "verbose": args.verbose,
             }
 

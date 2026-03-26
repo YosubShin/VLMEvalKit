@@ -230,6 +230,7 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
         batch_size = judge_kwargs.pop(
             "batch_size", 32
         )  # Use proper batch_size parameter
+        judge_nproc = max(1, int(judge_kwargs.get("nproc", 4)))
 
         if not osp.exists(result_path):
             data = load(eval_file)
@@ -524,8 +525,15 @@ Where the value of "verdict" must be the integer 1 if the model's answer is corr
                                 batch_responses = [
                                     judge_model.generate(batch_prompts[0])
                                 ]
+                            elif getattr(judge_model, "is_api", False) and judge_nproc > 1:
+                                batch_responses = track_progress_rich(
+                                    judge_model.generate,
+                                    [(prompt,) for prompt in batch_prompts],
+                                    nproc=judge_nproc,
+                                )
                             else:
-                                # Try batch, but likely will be sequential
+                                # Local non-vLLM judges are kept sequential to avoid
+                                # thread-safety and device contention issues.
                                 batch_responses = [
                                     judge_model.generate(prompt)
                                     for prompt in batch_prompts
