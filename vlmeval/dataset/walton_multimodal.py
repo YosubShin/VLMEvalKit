@@ -62,14 +62,41 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
 
             # Wrap in a simple interface
             class VLLMJudge:
-                def __init__(self, llm_instance):
+                def __init__(self, llm_instance, max_model_len):
                     self.llm = llm_instance
+                    self.max_model_len = max_model_len
                     self.sampling_params = SamplingParams(
                         temperature=0.1,
                         max_tokens=256,
                         # Remove aggressive stop tokens that can cause empty outputs
                         stop=None,
                     )
+
+                def _get_tokenizer(self):
+                    try:
+                        return self.llm.get_tokenizer()
+                    except Exception:
+                        return None
+
+                def _log_overlong_prompts(self, prompts, logger):
+                    tokenizer = self._get_tokenizer()
+                    for idx, prompt in enumerate(prompts):
+                        prompt_len = None
+                        if tokenizer is not None:
+                            try:
+                                prompt_len = len(tokenizer.encode(prompt))
+                            except Exception:
+                                prompt_len = None
+
+                        if prompt_len is None or prompt_len > self.max_model_len:
+                            preview = " ".join(str(prompt).split())[:400]
+                            logger.error(
+                                "Judge prompt %d may exceed max_model_len=%d (token_len=%s). Preview: %s",
+                                idx,
+                                self.max_model_len,
+                                prompt_len if prompt_len is not None else "unknown",
+                                preview,
+                            )
 
                 def generate(self, prompts):
                     """Generate responses for batch of prompts."""
@@ -87,7 +114,15 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
                     )
                     logger.info("=" * 30)
 
-                    outputs = self.llm.generate(prompts, self.sampling_params)
+                    try:
+                        outputs = self.llm.generate(prompts, self.sampling_params)
+                    except ValueError as err:
+                        if "maximum model length" in str(err):
+                            logger.error(
+                                "Encountered an overlong Walton judge prompt. Logging candidate prompts before re-raising."
+                            )
+                            self._log_overlong_prompts(prompts, logger)
+                        raise
                     responses = [output.outputs[0].text for output in outputs]
 
                     logger.info(f"Generated {len(responses)} responses")
@@ -99,7 +134,7 @@ class WaltonMultimodalReasoning(ImageBaseDataset):
                         del self.llm
                         torch.cuda.empty_cache()
 
-            return VLLMJudge(llm)
+            return VLLMJudge(llm, vllm_params["max_model_len"])
 
         except ImportError:
             # Fallback to regular judge if VLLM not available
