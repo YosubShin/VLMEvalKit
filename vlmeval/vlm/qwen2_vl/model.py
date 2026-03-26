@@ -5,6 +5,7 @@ import sys
 import warnings
 import math
 import logging
+import inspect
 
 import torch
 from transformers import StoppingCriteria
@@ -274,6 +275,10 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         self.use_vllm = kwargs.get("use_vllm", False)
         self.use_lmdeploy = kwargs.get("use_lmdeploy", False)
         self.limit_mm_per_prompt = VLLM_MAX_IMAGE_INPUT_NUM
+        self.force_sequential_on_multimodal_vllm = kwargs.get(
+            "force_sequential_on_multimodal_vllm", True
+        )
+        self._mm_cache_disabled = False
         assert (
             self.use_vllm + self.use_lmdeploy <= 1
         ), "You can only set one flag between `use_vllm` and `use_lmdeploy` to True"  # noqa: E501
@@ -300,13 +305,39 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                     "VLLM_WORKER_MULTIPROC_METHOD is not set to spawn."
                     "Use 'export VLLM_WORKER_MULTIPROC_METHOD=spawn' to avoid potential multi-process issues"
                 )
-            self.llm = LLM(
+            llm_kwargs = dict(
                 model=self.model_path,
                 max_num_seqs=32,
                 max_model_len=32768,
                 limit_mm_per_prompt={"image": self.limit_mm_per_prompt},
                 tensor_parallel_size=tp_size,
                 gpu_memory_utilization=kwargs.get("gpu_utils", 0.9),
+            )
+            signature = None
+            try:
+                signature = inspect.signature(LLM.__init__)
+            except Exception:
+                signature = None
+            if signature is not None:
+                params = signature.parameters
+                if "disable_mm_preprocessor_cache" in params:
+                    llm_kwargs["disable_mm_preprocessor_cache"] = True
+                    self._mm_cache_disabled = True
+                elif "mm_processor_cache_gb" in params:
+                    llm_kwargs["mm_processor_cache_gb"] = 0
+                    self._mm_cache_disabled = True
+            if self._mm_cache_disabled:
+                logging.info(
+                    "Disabling vLLM multimodal preprocessor cache for %s to avoid mm_input_cache instability.",
+                    self.model_path,
+                )
+            else:
+                logging.warning(
+                    "This vLLM build does not expose a multimodal cache disable flag; "
+                    "falling back to sequential multimodal requests for stability."
+                )
+            self.llm = LLM(
+                **llm_kwargs,
             )
 
         elif self.use_lmdeploy:
@@ -783,6 +814,17 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         """Check if this model instance supports batch processing."""
         return self.use_vllm
 
+    @staticmethod
+    def _message_has_multimodal_content(message) -> bool:
+        """Return True when a prompt includes image/video/audio inputs."""
+        if not isinstance(message, list):
+            return False
+        return any(
+            isinstance(item, dict)
+            and item.get("type") in {"image", "video", "audio"}
+            for item in message
+        )
+
     def get_optimal_batch_size(self, estimated_items: int = None) -> int:
         """Get the optimal batch size for current configuration."""
         if not self.use_vllm:
@@ -818,6 +860,25 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
 
         if not batch_messages:
             return []
+
+        has_multimodal_requests = any(
+            self._message_has_multimodal_content(message)
+            for message in batch_messages
+        )
+        if (
+            has_multimodal_requests
+            and self.force_sequential_on_multimodal_vllm
+            and not self._mm_cache_disabled
+        ):
+            if self.verbose:
+                logging.info(
+                    "Using sequential vLLM generation for multimodal prompts because "
+                    "this vLLM build cannot disable the multimodal preprocessor cache."
+                )
+            return [
+                self.generate_inner_vllm(message, dataset=dataset)
+                for message in batch_messages
+            ]
 
         # Validate batch size
         if batch_size is None:
