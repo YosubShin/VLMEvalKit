@@ -875,10 +875,12 @@ def evaluate_kfold(
 
         if use_vllm_judge and not model_name.startswith("gpt"):
             logger.info(f"Building VLLM judge model: {model_name}")
-            # Extract batch_size to avoid duplicate argument
-            batch_size = judge_kwargs.pop("batch_size", 32)
+            # Keep batch_size in judge_kwargs so dataset.evaluate() can reuse it
+            # for its own outer batching instead of falling back to 32.
+            judge_model_kwargs = dict(judge_kwargs)
+            batch_size = judge_model_kwargs.pop("batch_size", 32)
             judge_model = dataset._build_vllm_judge(
-                model_name, batch_size=batch_size, **judge_kwargs
+                model_name, batch_size=batch_size, **judge_model_kwargs
             )
         else:
             from vlmeval.dataset.utils.judge_util import build_judge
