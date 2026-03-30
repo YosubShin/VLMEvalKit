@@ -1375,9 +1375,14 @@ def main():
                 model_work_dir, f"{model_name}_{dataset_name}_k{args.k}_evaluated.xlsx"
             )
             # Do not persist auxiliary columns in the saved file
-            df_to_save = df_evaluated.drop(
-                columns=["verdict_mean", "difficulty"], errors="ignore"
+            columns_to_drop = ["verdict_mean", "difficulty"]
+            columns_to_drop.extend(
+                col
+                for col in df_evaluated.columns
+                if col.startswith("judge_stage_")
+                or col.startswith("judge_stage_detail_")
             )
+            df_to_save = df_evaluated.drop(columns=columns_to_drop, errors="ignore")
             df_to_save.to_excel(eval_file, index=False)
             logger.info(f"Evaluated results saved to {eval_file}")
 
