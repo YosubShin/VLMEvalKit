@@ -1239,7 +1239,7 @@ qwen3vl_series = {
         model_path="Qwen/Qwen3-VL-235B-A22B-Instruct",
         use_custom_prompt=False,
         use_vllm=True,
-        temperature=0.0, 
+        temperature=0, 
         max_new_tokens=32768
     ),
     "Qwen3-VL-235B-A22B-Thinking": partial(
@@ -1247,7 +1247,7 @@ qwen3vl_series = {
         model_path="Qwen/Qwen3-VL-235B-A22B-Thinking",
         use_custom_prompt=False,
         use_vllm=True,
-        temperature=0.0, 
+        temperature=0, 
         max_new_tokens=32768
     ),
     "Qwen3-VL-30B-A3B-Instruct": partial(
@@ -1255,7 +1255,7 @@ qwen3vl_series = {
         model_path="Qwen/Qwen3-VL-30B-A3B-Instruct",
         use_custom_prompt=False,
         use_vllm=True,
-        temperature=0.0, 
+        temperature=0, 
         max_new_tokens=32768
     ),
     "Qwen3-VL-30B-A3B-Thinking": partial(
@@ -1263,21 +1263,21 @@ qwen3vl_series = {
         model_path="Qwen/Qwen3-VL-30B-A3B-Thinking",
         use_custom_prompt=False,
         use_vllm=True,
-        temperature=0.0, 
+        temperature=0, 
         max_new_tokens=32768
     ),
     "Qwen3-VL-8B-Thinking": partial(
         Qwen3VLChat,
         model_path="Qwen/Qwen3-VL-8B-Thinking",
         use_custom_prompt=False,
-        temperature=0.7, 
+        temperature=0, 
         max_new_tokens=16384
     ),
     "Qwen3-VL-4B-Thinking": partial(
         Qwen3VLChat,
         model_path="Qwen/Qwen3-VL-4B-Thinking",
         use_custom_prompt=False,
-        temperature=0.7, 
+        temperature=0, 
         max_new_tokens=16384
     ),
     "Qwen3-VL-8B-Instruct": partial(
@@ -1285,7 +1285,7 @@ qwen3vl_series = {
         model_path="Qwen/Qwen3-VL-8B-Instruct",
         use_custom_prompt=False,
         use_vllm=True,
-        temperature=0.7, 
+        temperature=0, 
         max_new_tokens=16384,
     ),
     "Qwen3-VL-4B-Instruct": partial(
@@ -1293,7 +1293,7 @@ qwen3vl_series = {
         model_path="Qwen/Qwen3-VL-4B-Instruct",
         use_custom_prompt=False,
         use_vllm=True,
-        temperature=0.7, 
+        temperature=0, 
         max_new_tokens=16384
     ),
     
